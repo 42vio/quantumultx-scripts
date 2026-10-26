@@ -23,6 +23,6 @@
         "0 9 * * * https://raw.githubusercontent.com/Peng-YM/QuanX/master/Tasks/steam.js, tag=Steam价格, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/steam.png, enabled=true",
         "0 9 * * * https://raw.githubusercontent.com/Peng-YM/QuanX/master/Tasks/steam.js, tag=Steam价格, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/steam.png, enabled=true",
         "15 9 * * * https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/jparking_sign.js, tag=捷停车签到, img-url=https://raw.githubusercontent.com/FoKit/Scripts/main/images/jparking.png, enabled=true",
-        "20 17 * * * https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/attendance-qx.js, tag=下班打卡提醒, enabled=true"
+        "20 17 * * 1-5 https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/attendance-qx.js, tag=下班打卡提醒, enabled=true"
     ]
 }

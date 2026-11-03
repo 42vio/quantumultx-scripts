@@ -18,7 +18,7 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.1';
+const UF_VERSION = '1.0.2';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -285,38 +285,41 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
 function drawMetric(ctx, metric, label, x, y, width, compact) {
   const title = label.length > 2 ? label : '数据流量·' + label;
   text(ctx, title, x, y, width, 15, compact ? 10 : 11);
-  const barY = y + 20, barH = compact ? 38 : 42;
+  const barY = y + (compact ? 16 : 20), barH = compact ? 36 : 38;
   roundedRect(ctx, x, barY, 6, barH, 3, UF.track);
   const ratio = metric && metric.total > 0 ? Math.min(1, Math.max(0, metric.used / metric.total)) : null;
   if (ratio != null && ratio > 0) roundedRect(ctx, x, barY + barH * (1 - ratio), 6, barH * ratio, 3, UF.blue);
   const primary = formatMB(metric && metric.used);
-  const base = compact ? 23 : 26;
+  const base = compact ? 22 : 25;
   const size = Math.min(base, (width - 11) / Math.max(1, primary.length * 0.62));
-  text(ctx, primary, x + 11, y + 17, width - 11, 34, size, UF.text, true);
+  text(ctx, primary, x + 11, y + (compact ? 13 : 17), width - 11, 31, size, UF.text, true);
   let detail = '未返回明细';
   if (metric) detail = metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`;
   const detailSize = Math.min(compact ? 12 : 13, (width - 11) / Math.max(1, detail.length * 0.57));
-  text(ctx, detail, x + 11, y + 44, width - 11, 18, detailSize, metric ? UF.text : UF.muted, true);
+  text(ctx, detail, x + 11, y + (compact ? 39 : 43), width - 11, 16, detailSize, metric ? UF.text : UF.muted, true);
 }
 
 function renderImage(result, medium, width, height) {
+  // 统一为 158 点设计高度，再随组件尺寸缩放，避免小屏沿用固定坐标而挤入圆角。
+  width = width * 158 / height;
+  height = 158;
   const ctx = new DrawContext();
   ctx.size = new Size(width, height);
   ctx.respectScreenScale = true;
   ctx.opaque = true;
   ctx.setFillColor(new Color(UF.bg));
   ctx.fillRect(new Rect(0, 0, width, height));
-  const data = result.history.data, pad = 14;
+  const data = result.history.data, pad = 20;
   const metrics = displayMetrics(data);
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 9, col, false);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 9, col, false);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 16, col, false);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 16, col, false);
     const buckets = todayBuckets(result.history, Date.now());
-    const chartX = pad, chartY = 96, chartW = width - 2 * pad, chartH = height - chartY - 26;
+    const chartX = pad, chartY = 102, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     text(ctx, buckets.some(b => b.samples) ? '今日区间用量 · 采样小时' : result.history.note,
-      chartX, 79, chartW, 12, 8, UF.muted);
+      chartX, 87, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const x = chartX + hour * cell;
       ctx.setFillColor(new Color(hour % 6 === 0 ? UF.gridMajor : UF.gridMinor));
@@ -332,14 +335,17 @@ function renderImage(result, medium, width, height) {
     });
     [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + h * cell - (h === 23 ? 4 : 0), chartY + chartH + 2, 18, 10, 7, UF.muted, true));
   } else {
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 7, width - 2 * pad, true);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 76, width - 2 * pad, true);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 17, width - 2 * pad, true);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 85, width - 2 * pad, true);
   }
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   const label = result.stale ? `缓存 ${dayKey(data.at).slice(5)} ${time} · 点击重试`
     : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
-  text(ctx, label, pad, height - 12, width - 2 * pad, 11, 7, result.stale || data.warnings.length || metrics.omitted ? UF.warning : UF.muted);
+  // 正常的小号组件省略页脚，给底部留出完整留白；异常缓存仍明确提示。
+  if (medium || result.stale || data.warnings.length || metrics.omitted) {
+    text(ctx, label, pad + 2, height - 18, width - 2 * pad - 4, 9, 6.5, result.stale || data.warnings.length || metrics.omitted ? UF.warning : UF.muted);
+  }
   return ctx.getImage();
 }
 

@@ -113,6 +113,15 @@ function distributionFixture() {
     fs.writeFileSync(`${output}/${name}-empty.svg`,visual.renderImage({history:{...history,events:[],data:{...base,categories:{general:base.categories.general,directed:null},at:visualAt}},stale:true},medium,width,height));
   }
 
+  // 小号在不同手机尺寸下使用相同的安全留白，正常状态省略贴近圆角的页脚。
+  for (const side of [141,158,170]) {
+    const image=visual.renderImage({history,stale:false},false,side,side);
+    assert.ok(!image.includes('已用 / 总量'));
+    const textPositions=[...image.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"/g)];
+    assert.ok(textPositions.length>=6);
+    assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=17&&Number(m[2])<=140));
+  }
+
   for(const theme of ['黑色','白色']) {
     visual.applyTheme({theme});
     for (const [name,medium,width,height] of [['small',false,158,158],['medium',true,338,158]]) {
@@ -201,7 +210,7 @@ function distributionFixture() {
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.1');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.2');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -211,7 +220,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.1';","const UF_VERSION = '1.0.2';");
+  updateSource=source.replace("const UF_VERSION = '1.0.2';","const UF_VERSION = '1.0.3';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');
@@ -224,5 +233,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

@@ -18,7 +18,7 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.4';
+const UF_VERSION = '1.0.5';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -415,7 +415,7 @@ async function readCookie() {
   return cookie;
 }
 
-async function fetchData(cookie, overrides) {
+async function postData(cookie, form) {
   const req = new Request(UF.endpoint);
   req.method = 'POST';
   req.headers = {
@@ -425,12 +425,32 @@ async function fetchData(cookie, overrides) {
     Origin: 'https://imgxx.client.10010.com',
     Referer: 'https://imgxx.client.10010.com/',
   };
-  req.body = UF.form;
+  if (form) req.body = form;
   req.timeoutInterval = 12;
-  let body;
-  try { body = await req.loadJSON(); }
-  catch (_) { throw new Error('联通明细接口暂时不可用，请稍后重试'); }
-  return parsePackages(body, overrides);
+  let raw;
+  try { raw = await req.loadString(); }
+  catch (_) { throw new Error('联通明细接口暂时不可用，请检查网络后重试'); }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (_) { parsed = null; }
+  // 过期 Cookie 时接口返回纯文本 999999，JSON.parse 会成功得到一个数字，同样按非 JSON 处理。
+  return parsed && typeof parsed === 'object' ? parsed : { code: 'NON_JSON', raw: String(raw).slice(0, 40) };
+}
+
+async function fetchData(cookie, overrides) {
+  // 先按 App 自身的表单请求（逐卡明细依赖这份参数）；失败时退回不带表单的旧请求。
+  let error = null;
+  for (const form of [UF.form, '']) {
+    const body = await postData(cookie, form);
+    if (body.code === 'NON_JSON') {
+      error = new Error(/^\d+$/.test(body.raw.trim()) ? 'Cookie 可能已失效，请打开联通 App 首页 → 流量查询后重试'
+        : '联通明细接口返回了非 JSON 内容，请在“连接检查”查看');
+      continue;
+    }
+    try { return parsePackages(body, overrides); }
+    catch (parseError) { error = parseError; }
+  }
+  throw error || new Error('联通明细接口暂时不可用，请稍后重试');
 }
 
 async function refresh(store) {

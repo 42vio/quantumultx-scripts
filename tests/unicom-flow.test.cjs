@@ -218,7 +218,7 @@ function distributionFixture() {
 
   // 首次未配置、缓存降级及小组件启动分支均可完成，且只请求指定的 Cookie 字段。
   const files=new Map(); let requestCount=0, widget=null, completed=0, apiError=false, lastRequest=null;
-  let updateSource=source, cloudFile=false, cloudDownloads=0, failScriptWrite=false, dataPayload=fixture();
+  let updateSource=source, cloudFile=false, cloudDownloads=0, failScriptWrite=false, dataPayload=fixture(), rawResponse=null, formBroken=false;
   const alertChoices=[], alerts=[];
   class FileManager {
     static local(){return new FileManager();} static iCloud(){return new FileManager();}
@@ -228,13 +228,17 @@ function distributionFixture() {
   }
   class Request {
     constructor(url){this.url=url;}
-    async loadString(){assert.ok(this.url.startsWith('https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js?'));if(updateSource instanceof Error)throw updateSource;return updateSource;}
+    async loadString(){ if(this.url.startsWith('https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js?')){if(updateSource instanceof Error)throw updateSource;return updateSource;}
+      requestCount++; lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
+      if(apiError)throw new Error('offline');
+      if(formBroken && this.body) return JSON.stringify({code:'9999'});
+      return rawResponse===null?JSON.stringify(dataPayload):rawResponse;}
     async loadJSON(){requestCount++; if(this.url.includes('/query/data/')) return {val:'JSESSIONID=FAKE_TEST_ONLY;'};
       lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
   class ListWidget {
-    setPadding(){} addImage(){return {};} addText(){return {};} addSpacer(){}
+    setPadding(){} addImage(){return {};} addText(value){(this.texts=this.texts||[]).push(String(value));return {};} addSpacer(){}
   }
   class Alert {
     addAction(){} addCancelAction(){}
@@ -266,6 +270,14 @@ function distributionFixture() {
   assert.match(lastRequest.headers.Cookie,/JSESSIONID=FAKE_TEST_ONLY/);
   apiError=true; await integration.main(); assert.equal(completed,2); assert.ok(widget);
   files.clear(); await integration.main(); assert.equal(completed,3); assert.ok(widget);
+  // 过期 Cookie 时联通返回纯文本 999999，需要给出可操作的提示而不是“接口不可用”。
+  apiError=false; rawResponse='999999'; files.delete('/documents/UnicomFlow/history.json');
+  await integration.main(); assert.equal(completed,4); assert.match(widget.texts.join('|'),/Cookie 可能已失效/);
+  rawResponse=null; files.clear();
+  // 表单请求失败时退回不带表单的旧请求，套餐池照常显示。
+  formBroken=true; files.delete('/documents/UnicomFlow/history.json'); const beforeFallback=requestCount;
+  await integration.main(); assert.equal(completed,5); assert.equal(requestCount,beforeFallback+3); // Cookie + 两次数据请求 assert.ok(widget.backgroundImage);
+  formBroken=false; files.clear();
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // App 打开配置页不查账号；DnYY 分组菜单的代理缓存仍直读指定 Cookie。
   const appApi = await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
@@ -310,7 +322,7 @@ function distributionFixture() {
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.4');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.5');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -320,7 +332,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.4';","const UF_VERSION = '1.0.5';");
+  updateSource=source.replace("const UF_VERSION = '1.0.5';","const UF_VERSION = '1.0.6';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');
@@ -333,5 +345,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、真实抓包结构/镜像去重/角色标记、请求主机与表单体、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、真实抓包结构/镜像去重/角色标记、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

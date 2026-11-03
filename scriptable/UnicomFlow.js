@@ -18,13 +18,15 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.3';
+const UF_VERSION = '1.0.4';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
   boxjs: 'http://boxjs.net',
   cookieKey: '@YaYa_10010.cookie',
-  endpoint: 'https://m.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
+  endpoint: 'https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
+  // 联通 App 自身也是 POST 这份表单；不带参数时服务端会省略逐卡明细字段。
+  form: 'duanlianjieabc=&channelCode=&serviceType=&saleChannel=&externalSources=&contactCode=&ticket=&ticketPhone=&ticketChannel=&mobile1=&language=chinese',
   refreshMinutes: 30,
   folder: 'UnicomFlow',
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
@@ -58,7 +60,22 @@ function sumPackages(list) {
   };
 }
 
-function displayMetrics(data) {
+function displayMetrics(data, mode = '统一显示') {
+  if (mode === '主副卡分开显示') {
+    const members = [...(data.members || [])].sort((a, b) => {
+      const rank = m => m.role === '主卡' ? 0 : m.current ? 1 : 2;
+      return rank(a) - rank(b) || a.id.localeCompare(b.id);
+    });
+    const metric = member => {
+      if (!member) return null;
+      const records = member.records.filter(r => r.used != null && !r.conflict);
+      return records.length ? { used: records.reduce((sum, r) => sum + r.used, 0), total: null, detail: '已返回明细合计' } : null;
+    };
+    const label = (member, fallback) => member ? `${member.role}·${member.phone.slice(-4)}` : fallback;
+    return { left: metric(members[0]), right: metric(members[1]), leftLabel: label(members[0], '主卡明细'),
+      rightLabel: label(members[1], '副卡明细'), omitted: members.length > 2, perMember: true,
+      note: members.length ? members.length > 2 ? '另有成员 · 菜单查看全部' : '仅含已返回明细 · 非完整账单' : '未返回逐卡明细 · 点击查看' };
+  }
   const general = data.packages.filter(p => p.category === 'general');
   const shared = general.filter(p => p.shared === true);
   const exclusive = general.filter(p => p.shared === false);
@@ -107,23 +124,109 @@ function sessionTag(cookie) {
   return (h >>> 0).toString(16);
 }
 
+// 成员字段在不同省份、不同版本的响应里命名不一致，按“号码 + 用量”的结构识别，而不只认固定字段名。
+const UF_CARD_KEYS = ['serialNumber', 'userMobile', 'usernumber', 'number', 'mobile', 'phone', 'secretNumber',
+  'viceCardNo', 'viceCardNumber', 'cardNo', 'subscriberNo', 'servNumber', 'tel'];
+const UF_USE_KEYS = ['use', 'used', 'usage', 'usedFlow', 'useFlow', 'flowUse', 'usedValue', 'useValue'];
+
+function cardId(row) {
+  for (const key of UF_CARD_KEYS) {
+    const value = row[key] == null ? '' : String(row[key]).trim();
+    if (/^(?:\d{7,}|[\d*]{3,}\*[\d*]*)$/.test(value)) return value;
+  }
+  return '';
+}
+
+function usageOf(row, unit) {
+  for (const key of UF_USE_KEYS) {
+    if (row[key] == null) continue;
+    const value = megabytes(row[key], row.unit || unit);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function memberLists(record, consumed) {
+  if (!record || typeof record !== 'object') return [];
+  const lists = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (!/^vicecardl(?:ist|its)$/i.test(key) || !Array.isArray(value)) continue;
+    if (consumed) consumed.add(value);
+    lists.push(value);
+  }
+  return lists.flat();
+}
+
+// 兜底：找出响应中任何“号码 + 用量”的数组，兼容未预料的字段名；已被套餐解析消费的数组不重复使用。
+function memberSources(body, consumed) {
+  const found = [];
+  let visited = 0;
+  const walk = (value, path, depth) => {
+    if (!value || typeof value !== 'object' || depth > 8 || visited++ > 20000) return;
+    if (Array.isArray(value)) {
+      const rows = value.length && !consumed.has(value)
+        && value.every(item => item && typeof item === 'object' && !Array.isArray(item) && cardId(item))
+        ? value.map(row => ({ row, used: usageOf(row, row.unit) })).filter(item => item.used != null) : [];
+      if (rows.length) found.push({ path, rows });
+      value.slice(0, 40).forEach(item => walk(item, path + '[]', depth + 1));
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) walk(child, path ? path + '.' + key : key, depth + 1);
+  };
+  walk(body, '', 0);
+  return found;
+}
+
+// 只输出字段路径、数组长度和元素字段名，不包含手机号、Cookie 或任何字段值。
+function memberStructure(body) {
+  const lines = [], seen = new Set(), max = 120;
+  const safe = key => /^[a-zA-Z_$][a-zA-Z0-9_$]{0,39}$/.test(key) ? key : '[字段]';
+  const push = line => { if (!seen.has(line) && lines.length < max) { seen.add(line); lines.push(line); } };
+  const walk = (value, path, depth) => {
+    if (!value || typeof value !== 'object' || depth > 6 || lines.length >= max) return;
+    if (Array.isArray(value)) {
+      push(`${path || '根'}: 数组，${value.length} 项`);
+      const sample = value.find(item => item && typeof item === 'object' && !Array.isArray(item));
+      if (sample) push(`${path || '根'}[]: ${Object.keys(sample).slice(0, 16).map(safe).join(', ')}`);
+      value.slice(0, 2).forEach((item, i) => walk(item, `${path}[${i}]`, depth + 1));
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (child && typeof child === 'object') walk(child, path ? `${path}.${safe(key)}` : safe(key), depth + 1);
+    }
+  };
+  walk(body, '', 0);
+  const sources = memberSources(body, new Set());
+  const candidate = sources.length ? sources.map(s => `${s.path}: ${s.rows.length} 条含号码与用量`)
+    : ['未发现含“号码 + 用量”的数组'];
+  return ['仅含字段路径、数组长度与元素字段名，不含手机号、Cookie 或字段值。',
+    '候选成员明细：', ...candidate, '', '结构：', ...(lines.length ? lines : ['未发现相关字段'])].join('\n');
+}
+
+// 真实响应里 numberFlag('1'=副卡) 与 viceCardflag('1'=主卡) 互补；两者冲突时不猜角色。
+function roleOf(raw) {
+  const text = String(raw.role || raw.cardType || raw.roleName || raw.cardRole || '').toLowerCase();
+  if (/主卡|primary|main/.test(text)) return '主卡';
+  if (/副卡|secondary|vice/.test(text)) return '副卡';
+  const signals = [];
+  if (raw.numberFlag != null && String(raw.numberFlag) !== '') signals.push(String(raw.numberFlag) === '1' ? '副卡' : '主卡');
+  if (raw.viceCardflag != null && String(raw.viceCardflag) !== '') signals.push(String(raw.viceCardflag) === '0' ? '副卡' : '主卡');
+  return signals.length && signals.every(role => role === signals[0]) ? signals[0] : '成员卡';
+}
+
 function memberRows(rows, unit) {
   if (!Array.isArray(rows)) return [];
   return rows.flatMap(raw => {
     if (!raw || typeof raw !== 'object') return [];
-    const phone = ['serialNumber', 'userMobile', 'usernumber', 'number', 'mobile', 'phone', 'secretNumber']
-      .map(key => String(raw[key] || '').trim()).find(value => /^(?:\d{7,}|[\d*]*\*[\d*]*)$/.test(value));
+    const phone = cardId(raw);
     if (!phone) return [];
     const masked = phone.length >= 7 ? phone.slice(0, 3) + '****' + phone.slice(-4) : '****' + phone.slice(-2);
-    const roleValue = String(raw.role || raw.cardType || raw.numberFlag || raw.viceCardflag || '').toLowerCase();
-    const role = ['primary', 'main', '主卡'].includes(roleValue) ? '主卡'
-      : ['secondary', 'vice', '副卡'].includes(roleValue) ? '副卡' : '成员卡';
     // 当前登录卡不等同于主卡，缺失角色时只显示成员卡。
-    return [{ id: sessionTag(phone), phone: masked, role, current: String(raw.currentLoginFlag) === '1', used: megabytes(raw.use, unit) }];
+    return [{ id: sessionTag(phone), phone: masked, role: roleOf(raw), current: String(raw.currentLoginFlag) === '1', used: usageOf(raw, unit) }];
   });
 }
 
-function summarizeMembers(body, packages) {
+function summarizeMembers(body, packages, consumed) {
   const members = new Map();
   const get = row => {
     if (!members.has(row.id)) members.set(row.id, { id: row.id, phone: row.phone, role: row.role, current: row.current, records: [] });
@@ -133,7 +236,20 @@ function summarizeMembers(body, packages) {
     member.current = member.current || row.current;
     return member;
   };
-  for (const row of memberRows(body.viceCardLits)) get(row);
+  const attach = (pkg, rows) => {
+    for (const row of rows) {
+      if (!(pkg.members || []).some(item => item.id === row.id && item.used === row.used)) (pkg.members = pkg.members || []).push(row);
+    }
+  };
+  for (const row of memberRows(memberLists(body, consumed))) get(row);
+  // shareData 里能对上已知套餐的逐卡明细补到该套餐名下；只补成员，不改套餐池额度。
+  if (body.shareData && Array.isArray(body.shareData.details)) {
+    for (const item of body.shareData.details) {
+      if (!item || typeof item !== 'object') continue;
+      const pkg = packages.find(p => p.id === packageId(item));
+      if (pkg) attach(pkg, memberRows(memberLists(item, consumed), item.unit));
+    }
+  }
   for (const pkg of packages.filter(p => p.category !== 'ignore')) {
     for (const row of pkg.members || []) {
       const member = get(row);
@@ -143,14 +259,31 @@ function summarizeMembers(body, packages) {
       } else member.records.push({ packageId: pkg.id, name: pkg.name, used: row.used });
     }
   }
+  // 字段名未预料的成员数组：只补充这张卡的明细，不参与套餐池合计。
+  for (const source of memberSources(body, consumed)) {
+    const label = source.path.split('.').slice(-2).join('.');
+    for (const { row, used } of source.rows) {
+      const [normalized] = memberRows([row]);
+      if (!normalized) continue;
+      const member = get({ ...normalized, used });
+      // 同一张卡同值的镜像数组（如 shareData.viceCardList）不重复累加。
+      if (member.records.some(record => record.used === used)) continue;
+      member.records.push({ packageId: 'member:' + source.path, name: `成员明细 · ${label}`, used });
+    }
+  }
   return [...members.values()];
+}
+
+function packageId(item) {
+  const name = [item.feePolicyName, item.addUpItemName].filter(Boolean).join(' · ') || '未命名流量包';
+  return JSON.stringify([item.feePolicyId || name, item.addupItemCode || '', item.endDate || item.endXsbDate || '']);
 }
 
 function parsePackages(body, overrides = {}) {
   if (!body || String(body.code) !== '0000') {
     throw new Error('联通未返回套餐数据，请重新获取 Cookie 或稍后重试');
   }
-  const packages = [], warnings = [], seen = new Map();
+  const packages = [], warnings = [], seen = new Map(), memberArrays = new Set();
   const roots = ['resources', 'unshared', 'rzbresources', 'mlresources'];
   for (const root of roots) {
     if (!Array.isArray(body[root])) continue;
@@ -178,11 +311,11 @@ function parsePackages(body, overrides = {}) {
           continue;
         }
         // 共享包保持整个套餐池的口径，与 total/remain 一致，不混用某张副卡的 use。
-        const id = JSON.stringify([item.feePolicyId || name, item.addupItemCode || '', item.endDate || item.endXsbDate || '']);
+        const id = packageId(item);
         const signature = JSON.stringify([used, total, remaining, unlimited]);
         if (seen.has(id)) {
           if (seen.get(id) !== signature) throw new Error('同一套餐出现不同数值，暂不汇总，请在联通 App 核对共享套餐');
-          packages.find(pkg => pkg.id === id).members.push(...memberRows(item.viceCardlist, item.unit));
+          packages.find(pkg => pkg.id === id).members.push(...memberRows(memberLists(item, memberArrays), item.unit));
           continue;
         }
         seen.set(id, signature);
@@ -194,7 +327,7 @@ function parsePackages(body, overrides = {}) {
           : /共享|5G畅爽冰激凌199元/.test(name) ? true : null;
         if (['general', 'directed', 'ignore'].includes(overrides[id])) category = overrides[id];
         if (['shared', 'exclusive'].includes(overrides[id])) { category = 'general'; shared = overrides[id] === 'shared'; }
-        packages.push({ id, name, category, shared, used, total: unlimited ? null : total, remaining, unlimited, members: memberRows(item.viceCardlist, item.unit) });
+        packages.push({ id, name, category, shared, used, total: unlimited ? null : total, remaining, unlimited, members: memberRows(memberLists(item, memberArrays), item.unit) });
       }
     }
   }
@@ -209,7 +342,7 @@ function parsePackages(body, overrides = {}) {
     } : null;
   }
   if (!categories.general && !categories.directed) throw new Error('当前流量包均已排除，请在“套餐分类”中选择要显示的套餐');
-  return { categories, packages, members: summarizeMembers(body, packages), warnings: [...new Set(warnings)] };
+  return { categories, packages, members: summarizeMembers(body, packages, memberArrays), memberReport: memberStructure(body), warnings: [...new Set(warnings)] };
 }
 
 function snapshotSignature(packages) {
@@ -285,7 +418,14 @@ async function readCookie() {
 async function fetchData(cookie, overrides) {
   const req = new Request(UF.endpoint);
   req.method = 'POST';
-  req.headers = { Cookie: cookie, Accept: 'application/json' };
+  req.headers = {
+    Cookie: cookie,
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    Origin: 'https://imgxx.client.10010.com',
+    Referer: 'https://imgxx.client.10010.com/',
+  };
+  req.body = UF.form;
   req.timeoutInterval = 12;
   let body;
   try { body = await req.loadJSON(); }
@@ -334,7 +474,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   const size = Math.min(base, (width - 11) / Math.max(1, primary.length * 0.62));
   text(ctx, primary, x + 11, y + (compact ? 13 : 17), width - 11, 31, size, UF.text, true);
   let detail = '未返回明细';
-  if (metric) detail = metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`;
+  if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   const detailSize = Math.min(compact ? 12 : 13, (width - 11) / Math.max(1, detail.length * 0.57));
   text(ctx, detail, x + 11, y + (compact ? 39 : 43), width - 11, 16, detailSize, metric ? UF.text : UF.muted, true);
 }
@@ -350,7 +490,7 @@ function renderImage(result, medium, width, height) {
   ctx.setFillColor(new Color(UF.bg));
   ctx.fillRect(new Rect(0, 0, width, height));
   const data = result.history.data, pad = 20;
-  const metrics = displayMetrics(data);
+  const metrics = displayMetrics(data, UF.displayMode);
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 16, col, false);
@@ -358,7 +498,7 @@ function renderImage(result, medium, width, height) {
     const buckets = todayBuckets(result.history, Date.now());
     const chartX = pad, chartY = 102, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
-    text(ctx, buckets.some(b => b.samples) ? '今日区间用量 · 采样小时' : result.history.note,
+    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
       chartX, 87, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
@@ -382,9 +522,9 @@ function renderImage(result, medium, width, height) {
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   const label = result.stale ? `缓存 ${dayKey(data.at).slice(5)} ${time} · 点击重试`
-    : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
+    : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
   // 正常的小号组件省略页脚，给底部留出完整留白；异常缓存仍明确提示。
-  if (medium || result.stale || data.warnings.length || metrics.omitted) {
+  if (medium || result.stale || data.warnings.length || metrics.omitted || metrics.perMember) {
     text(ctx, label, pad + 2, height - 18, width - 2 * pad - 4, 9, 6.5, result.stale || data.warnings.length || metrics.omitted ? UF.warning : UF.muted);
   }
   return ctx.getImage();
@@ -498,6 +638,7 @@ function createWidgetClass(DmYY) {
       UF.refreshMinutes = Number.isFinite(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : UF_DEFAULTS.refreshMinutes;
       this.settings.refreshAfterDate = String(UF.refreshMinutes);
       applyTheme(this.settings);
+      UF.displayMode = this.settings.displayMode === '主副卡分开显示' ? '主副卡分开显示' : '统一显示';
     }
 
     async loadResult() {
@@ -560,7 +701,7 @@ function createWidgetClass(DmYY) {
       await this.loadResult();
       if (!this.result) return alertMessage('主副卡用量', this.failure);
       const members = this.result.history.data.members || [];
-      if (!members.length) return alertMessage('主副卡用量', '本次套餐接口未返回成员用量，无法从共享池总量推算主副卡分别用了多少。');
+      if (!members.length) return alertMessage('主副卡用量', '未识别到成员用量，可能是接口未返回或字段尚未适配。请打开“成员字段检查”复制报告，不能从共享池总量推算逐卡用量。');
       const a = new Alert(); a.title = '主副卡用量';
       a.message = (this.result.stale ? '当前为缓存数据。\n' : '') + '按卡查看接口返回的流量包明细；角色未标明时显示“成员卡”。';
       members.forEach(member => a.addAction(`${member.role} ${member.phone}${member.current ? ' · 当前登录' : ''}`));
@@ -571,6 +712,16 @@ function createWidgetClass(DmYY) {
       const summary = known.length ? `已返回明细合计：${formatMB(known.reduce((sum, record) => sum + record.used, 0))}\n\n` : '';
       await alertMessage(`${member.role} ${member.phone}`, summary + (lines.join('\n\n') || '接口未返回这张卡的用量。')
         + '\n\n仅统计接口明确归属这张卡的用量，缺失项显示 --，不代表整张卡的全部用量。');
+    }
+
+    async memberDiagnostics() {
+      await this.loadResult();
+      const report = this.result && this.result.history.data.memberReport;
+      if (!report) return alertMessage('成员字段检查', this.failure || '尚无结构报告，请先刷新数据');
+      const a = new Alert(); a.title = '成员字段检查';
+      a.message = (this.result.stale ? '当前为缓存报告。\n' : '') + report;
+      a.addAction('复制报告'); a.addCancelAction('关闭');
+      if (await a.presentAlert() === 0) Pasteboard.copyString(report);
     }
 
     async connectionStatus() {
@@ -617,6 +768,7 @@ function createWidgetClass(DmYY) {
       const action = (name, title, symbol, color, onClick) => ({ name, title, type: 'input', icon: { name: symbol, color }, onClick });
       this.registerAction({ title: '组件配置', menu: [
         action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
+        { name: 'displayMode', val: 'displayMode', title: '显示方式', type: 'select', options: ['统一显示', '主副卡分开显示'], defaultValue: '统一显示', icon: { name: 'person.2.fill', color: '#5856D6' } },
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
         action('flowCategories', '套餐分类', 'list.bullet', '#007AFF', async () => {
           await this.loadResult();
@@ -629,6 +781,7 @@ function createWidgetClass(DmYY) {
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
         action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
+        action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
         action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),
         action('flowStatus', '连接检查', 'network', '#007AFF', () => this.connectionStatus()),
       ] });

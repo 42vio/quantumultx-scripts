@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, renderImage, applyTheme, displayMetrics, createWidgetClass, validateUpdateSource, newerVersion, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, createWidgetClass, validateUpdateSource, newerVersion, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -27,6 +27,21 @@ function distributionFixture() {
   cardFixture.viceCardLits=[{number:'13000000001',role:'main'}, {number:'13000000002',role:'vice'}];
   cardFixture.resources[0].details[0].viceCardlist=[{number:'13000000001',use:1.22*1024},{number:'13000000002',use:2*1024,currentLoginFlag:'1'}];
   const cards=parsePackages(cardFixture);
+  const splitCards=api.displayMetrics(cards,'主副卡分开显示');
+  assert.equal(splitCards.leftLabel,'主卡·0001'); assert.equal(splitCards.rightLabel,'副卡·0002');
+  assert.equal(splitCards.left.used,1.22*1024); assert.equal(splitCards.right.used,2*1024);
+  assert.equal(splitCards.left.total,null); assert.equal(splitCards.left.detail,'已返回明细合计');
+  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'共享通用');
+  const variant=distributionFixture();variant.viceCardList=[{number:'13000000001',role:'main'}];
+  variant.shareData={details:[{feePolicyId:'main',feePolicyName:'5G畅爽冰激凌199元（首月全量全价）（上月结转限本月使用）',elemType:'3',viceCardList:[{number:'13000000001',use:20}]}]};
+  const variantData=parsePackages(variant);assert.equal(variantData.members[0].records[0].used,20);
+  assert.equal(variantData.categories.general.total,200*1024); // shareData 只补成员，不重复统计额度
+  const report=api.memberStructure({...variant,cookie:'SECRET_COOKIE',phone:'13000000001'});
+  assert.ok(report.includes('shareData.details[0].viceCardList'));
+  assert.ok(!report.includes('SECRET_COOKIE'));assert.ok(!report.includes('13000000001'));
+
+  assert.equal(api.displayMetrics(base,'主副卡分开显示').left,null);
+
   assert.equal(cards.members.length,2); assert.equal(cards.members[0].role,'主卡'); assert.equal(cards.members[1].role,'副卡');
   assert.equal(cards.members[1].current,true); assert.equal(cards.members[1].records[0].used,2048);
   assert.equal(cards.members[0].records.length,1); // 非共享包没有归属数据，不推算到主卡
@@ -42,6 +57,45 @@ function distributionFixture() {
   const absent=distributionFixture();absent.viceCardLits=[{number:'13000000003'}];
   assert.equal(parsePackages(absent).members[0].records.length,0);
   assert.equal(parsePackages(fixture()).members.length,0);
+  // 字段名未知的成员数组按“号码 + 用量”结构识别，号码字段与字符串单位都要能解析。
+  const generic=distributionFixture();
+  generic.subCards=[{viceCardNo:'13000000009',role:'vice',usedFlow:'1.5GB'}];
+  const genericData=parsePackages(generic);
+  assert.equal(genericData.members.length,1);
+  assert.equal(genericData.members[0].role,'副卡');
+  assert.equal(genericData.members[0].records[0].used,1.5*1024);
+  assert.equal(genericData.categories.general.total,200*1024); // 未知成员明细不并入套餐池
+  const genericReport=api.memberStructure(generic);
+  assert.ok(genericReport.includes('subCards: 1 条含号码与用量'));
+  assert.ok(genericReport.includes('subCards[]: viceCardNo, role, usedFlow'));
+  assert.ok(!genericReport.includes('13000000009')); assert.ok(!genericReport.includes('1.5GB'));
+  // shareData 明细不再依赖 elemType，能对上套餐就补成员。
+  const noElem=distributionFixture();
+  noElem.shareData={details:[{feePolicyId:'main',viceCardList:[{number:'13000000005',use:7}]}]};
+  assert.equal(parsePackages(noElem).members[0].records[0].used,7);
+  const others=distributionFixture();others.shareData={details:[{feePolicyId:'unknown',viceCardList:[{number:'13000000006',use:3}]}]};
+  const unmatched=parsePackages(others); // 对不上套餐时仍按成员明细展示，不猜测套餐归属
+  assert.equal(unmatched.members.length,1);
+  assert.equal(unmatched.members[0].records[0].used,3);
+  assert.match(unmatched.members[0].records[0].name,/成员明细/);
+  // 真实抓包结构（2026-11-03，号码已替换）：逐卡用量在 details.viceCardlist，shareData 镜像同一份，
+  // 顶层 viceCardLits 只有号码与 numberFlag；镜像数组不能重复累加。
+  const captured=distributionFixture();
+  const cardRows=[{usernumber:'186****0001',use:'0.0',viceCardflag:'1',currentLoginFlag:'1'},
+    {usernumber:'186****0002',use:'3859.66',viceCardflag:'0',currentLoginFlag:'0'}];
+  captured.viceCardLits=[{number:'186****0001',numberFlag:'0'},{number:'186****0002',numberFlag:'1'}];
+  captured.resources[0].details[0].viceCardlist=cardRows;
+  captured.shareData={mobile:'186****0001',details:[{...captured.resources[0].details[0],viceCardlist:cardRows}],viceCardList:cardRows};
+  const capturedData=parsePackages(captured);
+  assert.equal(capturedData.members.length,2);
+  assert.equal(capturedData.members[0].role,'主卡'); assert.equal(capturedData.members[1].role,'副卡');
+  assert.equal(capturedData.members[0].records.length,1); assert.equal(capturedData.members[0].records[0].used,0);
+  assert.equal(capturedData.members[1].records.length,1); assert.equal(capturedData.members[1].records[0].used,3859.66);
+  assert.equal(capturedData.categories.general.total,200*1024); // 成员明细不改写套餐池额度
+  const capturedSplit=api.displayMetrics(capturedData,'主副卡分开显示');
+  assert.equal(capturedSplit.leftLabel,'主卡·0001'); assert.equal(capturedSplit.rightLabel,'副卡·0002');
+  assert.equal(capturedSplit.left.used,0); assert.equal(capturedSplit.right.used,3859.66);
+  assert.equal(capturedSplit.left.total,null); assert.equal(capturedSplit.left.detail,'已返回明细合计');
 
   const distribution=parsePackages(distributionFixture());
   assert.equal(distribution.categories.directed,null); // 两项均为通用，不冒充定向
@@ -163,7 +217,7 @@ function distributionFixture() {
   }
 
   // 首次未配置、缓存降级及小组件启动分支均可完成，且只请求指定的 Cookie 字段。
-  const files=new Map(); let requestCount=0, widget=null, completed=0, apiError=false;
+  const files=new Map(); let requestCount=0, widget=null, completed=0, apiError=false, lastRequest=null;
   let updateSource=source, cloudFile=false, cloudDownloads=0, failScriptWrite=false, dataPayload=fixture();
   const alertChoices=[], alerts=[];
   class FileManager {
@@ -176,6 +230,7 @@ function distributionFixture() {
     constructor(url){this.url=url;}
     async loadString(){assert.ok(this.url.startsWith('https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js?'));if(updateSource instanceof Error)throw updateSource;return updateSource;}
     async loadJSON(){requestCount++; if(this.url.includes('/query/data/')) return {val:'JSESSIONID=FAKE_TEST_ONLY;'};
+      lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
   class ListWidget {
@@ -203,6 +258,12 @@ function distributionFixture() {
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
+  // 与联通 App 相同的接口主机与表单体，逐卡明细依赖这份参数。
+  assert.equal(new URL(lastRequest.url).host,'mxx.client.10010.com');
+  assert.equal(lastRequest.method,'POST');
+  assert.match(lastRequest.headers['Content-Type'],/application\/x-www-form-urlencoded/);
+  assert.match(lastRequest.body,/language=chinese/);
+  assert.match(lastRequest.headers.Cookie,/JSESSIONID=FAKE_TEST_ONLY/);
   apiError=true; await integration.main(); assert.equal(completed,2); assert.ok(widget);
   files.clear(); await integration.main(); assert.equal(completed,3); assert.ok(widget);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
@@ -215,6 +276,7 @@ function distributionFixture() {
   const menus=instance._menuActions.flatMap(group=>group.menu);
   assert.equal(new Set(menus.map(item=>item.name)).size,menus.length);
   assert.ok(menus.some(item=>item.title==='组件主题' && item.options.join(',')==='黑色,白色'));
+  assert.ok(menus.some(item=>item.title==='显示方式' && item.options.join(',')==='统一显示,主副卡分开显示'));
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
   assert.ok(menus.some(item=>item.title==='账户设置'));
   assert.ok(menus.some(item=>item.title==='代理缓存'));
@@ -243,12 +305,12 @@ function distributionFixture() {
   assert.equal(alerts.at(-1).title,'副卡 130****0002');assert.ok(alerts.at(-1).message.includes('2.0GB'));
   assert.ok(!alerts.at(-1).message.includes('13000000002'));
   assert.ok(!Array.from(files.values()).join('').includes('13000000002'));
-  files.delete('/documents/UnicomFlow/history.json'); dataPayload=fixture();await instance.showMembers();assert.match(alerts.at(-1).message,/未返回成员用量/);
+  files.delete('/documents/UnicomFlow/history.json'); dataPayload=fixture();await instance.showMembers();assert.match(alerts.at(-1).message,/未识别到成员用量/);
   instance.settings.flowBoxjsDomain='https://wrong/path';
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.3');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.4');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -258,7 +320,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.3';","const UF_VERSION = '1.0.4';");
+  updateSource=source.replace("const UF_VERSION = '1.0.4';","const UF_VERSION = '1.0.5';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');
@@ -271,5 +333,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、真实抓包结构/镜像去重/角色标记、请求主机与表单体、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

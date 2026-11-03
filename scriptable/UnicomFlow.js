@@ -18,15 +18,15 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.5';
+const UF_VERSION = '1.0.6';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
   boxjs: 'http://boxjs.net',
   cookieKey: '@YaYa_10010.cookie',
   endpoint: 'https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
-  // 联通 App 自身也是 POST 这份表单；不带参数时服务端会省略逐卡明细字段。
-  form: 'duanlianjieabc=&channelCode=&serviceType=&saleChannel=&externalSources=&contactCode=&ticket=&ticketPhone=&ticketChannel=&mobile1=&language=chinese',
+  // 与成功 HAR 的实际表单一致；失败时仍可退回无表单请求。
+  form: 'language=chinese',
   refreshMinutes: 30,
   folder: 'UnicomFlow',
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
@@ -163,6 +163,8 @@ function memberSources(body, consumed) {
   let visited = 0;
   const walk = (value, path, depth) => {
     if (!value || typeof value !== 'object' || depth > 8 || visited++ > 20000) return;
+    // use 在语音中是分钟、短信中是条数；不能按缺省 MB 解析。
+    if (!Array.isArray(value) && (/voice|sms/i.test(String(value.type || '')) || ['1', '2'].includes(String(value.elemType)))) return;
     if (Array.isArray(value)) {
       const rows = value.length && !consumed.has(value)
         && value.every(item => item && typeof item === 'object' && !Array.isArray(item) && cardId(item))
@@ -209,8 +211,8 @@ function roleOf(raw) {
   if (/主卡|primary|main/.test(text)) return '主卡';
   if (/副卡|secondary|vice/.test(text)) return '副卡';
   const signals = [];
-  if (raw.numberFlag != null && String(raw.numberFlag) !== '') signals.push(String(raw.numberFlag) === '1' ? '副卡' : '主卡');
-  if (raw.viceCardflag != null && String(raw.viceCardflag) !== '') signals.push(String(raw.viceCardflag) === '0' ? '副卡' : '主卡');
+  if (['0', '1'].includes(String(raw.numberFlag))) signals.push(String(raw.numberFlag) === '1' ? '副卡' : '主卡');
+  if (['0', '1'].includes(String(raw.viceCardflag))) signals.push(String(raw.viceCardflag) === '0' ? '副卡' : '主卡');
   return signals.length && signals.every(role => role === signals[0]) ? signals[0] : '成员卡';
 }
 
@@ -438,7 +440,7 @@ async function postData(cookie, form) {
 }
 
 async function fetchData(cookie, overrides) {
-  // 先按 App 自身的表单请求（逐卡明细依赖这份参数）；失败时退回不带表单的旧请求。
+  // 先按成功抓包中的表单请求；失败时退回不带表单的旧请求。
   let error = null;
   for (const form of [UF.form, '']) {
     const body = await postData(cookie, form);

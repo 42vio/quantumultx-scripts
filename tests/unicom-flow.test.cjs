@@ -57,6 +57,9 @@ function distributionFixture() {
   const absent=distributionFixture();absent.viceCardLits=[{number:'13000000003'}];
   assert.equal(parsePackages(absent).members[0].records.length,0);
   assert.equal(parsePackages(fixture()).members.length,0);
+  // 未知数字标记不猜测主副卡角色。
+  const unknownRole=distributionFixture(); unknownRole.viceCardLits=[{number:'13000000007',numberFlag:'2',viceCardflag:'9'}];
+  assert.equal(parsePackages(unknownRole).members[0].role,'成员卡');
   // 字段名未知的成员数组按“号码 + 用量”结构识别，号码字段与字符串单位都要能解析。
   const generic=distributionFixture();
   generic.subCards=[{viceCardNo:'13000000009',role:'vice',usedFlow:'1.5GB'}];
@@ -86,6 +89,16 @@ function distributionFixture() {
   captured.viceCardLits=[{number:'186****0001',numberFlag:'0'},{number:'186****0002',numberFlag:'1'}];
   captured.resources[0].details[0].viceCardlist=cardRows;
   captured.shareData={mobile:'186****0001',details:[{...captured.resources[0].details[0],viceCardlist:cardRows}],viceCardList:cardRows};
+  // 含号码和 use 的语音、短信成员数组不能被兜底解析当成 MB。
+  const mixedUnits=JSON.parse(JSON.stringify(captured));
+  mixedUnits.resources.push({type:'Voice',details:[{elemType:'1',viceCardlist:[
+    {usernumber:'186****0002',use:'13',viceCardflag:'0'},
+  ]}]}, {type:'smsList',details:[{elemType:'2',viceCardlist:[
+    {usernumber:'186****0002',use:'7',viceCardflag:'0'},
+  ]}]});
+  const flowOnly=parsePackages(mixedUnits).members.find(m=>m.role==='副卡');
+  assert.equal(flowOnly.records.length,1);
+  assert.equal(flowOnly.records[0].used,Number(cardRows[1].use));
   const capturedData=parsePackages(captured);
   assert.equal(capturedData.members.length,2);
   assert.equal(capturedData.members[0].role,'主卡'); assert.equal(capturedData.members[1].role,'副卡');
@@ -262,11 +275,11 @@ function distributionFixture() {
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
-  // 与联通 App 相同的接口主机与表单体，逐卡明细依赖这份参数。
+  // 与成功抓包相同的接口主机与表单体。
   assert.equal(new URL(lastRequest.url).host,'mxx.client.10010.com');
   assert.equal(lastRequest.method,'POST');
   assert.match(lastRequest.headers['Content-Type'],/application\/x-www-form-urlencoded/);
-  assert.match(lastRequest.body,/language=chinese/);
+  assert.equal(lastRequest.body,'language=chinese');
   assert.match(lastRequest.headers.Cookie,/JSESSIONID=FAKE_TEST_ONLY/);
   apiError=true; await integration.main(); assert.equal(completed,2); assert.ok(widget);
   files.clear(); await integration.main(); assert.equal(completed,3); assert.ok(widget);
@@ -322,7 +335,7 @@ function distributionFixture() {
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.5');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.6');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -332,7 +345,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.5';","const UF_VERSION = '1.0.6';");
+  updateSource=source.replace("const UF_VERSION = '1.0.6';","const UF_VERSION = '1.0.7';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');
@@ -345,5 +358,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、真实抓包结构/镜像去重/角色标记、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

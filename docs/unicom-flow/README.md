@@ -26,7 +26,7 @@
 
 ## 脚本更新
 
-首次安装使用[仓库原始脚本](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js)。当前版本 `1.0.5`。
+首次安装使用[仓库原始脚本](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js)。当前版本 `1.0.6`。
 
 菜单“组件配置 → 脚本更新”下载本仓库 `main/scriptable/UnicomFlow.js`，检查文件标识和 JavaScript 语法，并读取版本号。只有仓库版本更高时才提示更新，确认后直接替换，不创建备份；相同版本或旧版本不覆盖当前脚本。
 
@@ -34,7 +34,7 @@
 
 主题和其他 DmYY 配置、历史快照、QX Cookie 不随更新清除。更新后关闭配置页、重新运行脚本。`DmYY.js` 不参与本菜单的更新。
 
-已安装 `1.0.0` 的用户可以从菜单更新。后续发布时递增 `UF_VERSION`（例如 `1.0.5`），再推送脚本内容。
+已安装 `1.0.0` 的用户可以从菜单更新。后续发布时递增 `UF_VERSION`（例如 `1.0.7`），再推送脚本内容。
 
 ## 显示规则
 
@@ -84,6 +84,8 @@
 
 > 1.0.3 在手机上提示“未返回成员用量”。抓包显示 App 自身请求的是 `mxx.client.10010.com` 且带表单参数 `language=chinese` 等；1.0.3 请求 `m.client.10010.com` 且不带表单体，推测因此拿不到逐卡明细。1.0.4 已改为与 App 一致的接口主机、表单体和请求头。逐卡显示仍需在手机上实测确认。
 
+> 1.0.6：依据新提供的成功 HAR，将请求表单精简为 `language=chinese`；修正通用成员扫描混入语音／短信 `use` 的问题，按资源 `type` 和 `elemType` 排除非流量明细；未知数字角色标记不再猜测主副卡。使用用户 HAR 离线核验可识别两张卡，且每张卡只保留共享流量明细。该 HAR 未返回非共享包的逐卡归属，因此不将该包分配给主卡或副卡。未重放抓包中的认证请求，也未将 HAR、Cookie 或原始响应加入仓库。在线调用与桌面显示仍需手机验证。
+
 > 1.0.5 补两处：Cookie 过期时接口返回纯文本 `999999`，现在直接提示“Cookie 可能已失效”并给出重新获取的步骤；表单请求拿不到数据时自动退回 1.0.3 的不带表单请求，至少保住套餐池用量，不会整套报错。
 
 下面是交互示意，号码和数据均为虚构；实际界面使用 Scriptable 的系统选卡菜单和明细弹窗。
@@ -119,7 +121,7 @@
 
 ![中号黑色主题](preview-medium.png)
 
-本地验证：`node tests/unicom-flow.test.cjs`。覆盖主副卡归属、脱敏、缺失和重复冲突、选卡查看、真实抓包结构（`shareData` 镜像去重、`numberFlag`/`viceCardflag` 角色）、请求体与接口主机、刻度居中和整卡背景，以及黑白主题、共享／非共享拆分、自动及手动分组、套餐字段、单位、去重、分类、缺失数据、跨日跨月、计数回退、会话隔离、乱序采样、原生绘图指令、首次运行与缓存降级，以及 Cookie 不落盘、DmYY 菜单注册与尺寸预览分支、配置页不发起账号请求。测试使用模拟数据，不声称已验证用户的真实联通账号或 iOS 原生显示。
+本地验证：`node tests/unicom-flow.test.cjs`。覆盖主副卡归属、脱敏、缺失和重复冲突、选卡查看、真实抓包结构（`shareData` 镜像去重、`numberFlag`/`viceCardflag` 角色）、请求体与接口主机、刻度居中和整卡背景，以及黑白主题、共享／非共享拆分、自动及手动分组、套餐字段、单位、去重、分类、缺失数据、跨日跨月、计数回退、会话隔离、乱序采样、原生绘图指令、首次运行与缓存降级，以及 Cookie 不落盘、DmYY 菜单注册与尺寸预览分支、配置页不发起账号请求。常规测试使用模拟数据，新增语音／短信成员不混入流量的回归用例。另在本机读取用户 HAR 进行离线解析核验，不保存原始响应到仓库；这不等于已验证实时查询或 iOS 原生显示。
 
 参考：[Scriptable 官方 API](https://docs.scriptable.app/)、[BoxJS 官方文档](https://docs.boxjs.app/)、[联通余量公开项目](https://github.com/ChinaTelecomOperators/ChinaUnicom)。流量查询与绘图独立实现，菜单使用 dompling 的 DmYY 依赖；既有 Cookie 获取规则也来自 dompling，不新增抓取规则。
 

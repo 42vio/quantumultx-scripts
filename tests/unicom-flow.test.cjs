@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, renderImage, applyTheme, displayMetrics, createWidgetClass, updateVersion, newerVersion, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, renderImage, applyTheme, displayMetrics, createWidgetClass, validateUpdateSource, newerVersion, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -200,28 +200,29 @@ function distributionFixture() {
   instance.settings.flowBoxjsDomain='https://wrong/path';
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
-  // 更新路径：只比较数字版本，拒绝 HTML/残缺脚本，取消或下载失败不写入。
-  assert.equal(appApi.updateVersion(source),'1.0.0');
+  // 比较版本号；取消和下载校验失败不写入，不创建备份。
+  assert.equal(appApi.validateUpdateSource(source),'1.0.1');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
-  assert.equal(appApi.newerVersion('1.0.0','1.0.0'),false);
-  assert.equal(appApi.newerVersion('0.9.9','1.0.0'),false);
-  assert.throws(()=>appApi.updateVersion('<html>error</html>'),/不是完整/);
-  assert.throws(()=>appApi.updateVersion(source+'\nconst broken = ;'),/语法/);
-  const path='/documents/联通流量.js', backup='/documents/UnicomFlow/backups/UnicomFlow.previous.txt';
+  assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
+  assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
+  assert.throws(()=>appApi.validateUpdateSource('<html>error</html>'),/不是完整/);
+  assert.throws(()=>appApi.validateUpdateSource(source+'\nconst broken = ;'),/语法/);
+  const path='/documents/联通流量.js';
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
-  assert.equal(files.has(backup),false);
-  updateSource=source.replace("const UF_VERSION = '1.0.0';","const UF_VERSION = '1.0.1';");
+  const beforeUpdateFiles=Array.from(files.keys()).sort();
+  updateSource=source.replace("const UF_VERSION = '1.0.1';","const UF_VERSION = '1.0.2';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  assert.equal(files.has(backup),false);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
-  assert.equal(files.get(backup),source); assert.equal(alerts.at(-1).title,'更新成功');
+  assert.equal(alerts.at(-1).title,'更新成功');
+  assert.deepEqual(Array.from(files.keys()).sort(),beforeUpdateFiles); // 只有当前文件被覆盖
   files.set(path,source); cloudFile=true;
   await instance.checkAndUpdateScript(); assert.equal(cloudDownloads,1);assert.equal(files.get(path),updateSource);
   files.set(path,source); failScriptWrite=true;
-  await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);assert.equal(files.get(backup),source);
-  assert.match(alerts.at(-1).message,/已恢复原脚本/);
+  await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'更新未完成');
+  assert.match(alerts.at(-1).message,/从仓库重新下载/);
+  files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 更新版本/校验/取消/备份/回滚/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

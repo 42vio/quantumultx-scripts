@@ -18,7 +18,7 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.0';
+const UF_VERSION = '1.0.1';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -400,15 +400,15 @@ async function chooseCategory(store, result) {
   await alertMessage('分类已保存', '再次运行脚本即可刷新数据，并重新积累历史。');
 }
 
-function updateVersion(source) {
+function validateUpdateSource(source) {
   if (typeof source !== 'string' || source.length < 8000 || source.length > 512000
     || !source.includes('// UnicomFlow Scriptable Widget') || !source.includes('function createWidgetClass(DmYY)')) {
-    throw new Error('下载内容不是完整的联通流量脚本，已保留当前版本');
+    throw new Error('下载内容不是完整的联通流量脚本，未替换当前文件');
   }
   const match = source.match(/^const UF_VERSION = ['"](\d+\.\d+\.\d+)['"];$/m);
-  if (!match) throw new Error('无法识别下载脚本的版本，已保留当前版本');
+  if (!match) throw new Error('无法识别下载脚本的版本，未替换当前文件');
   try { new Function('return (async () => {\n' + source + '\n})'); }
-  catch (_) { throw new Error('下载脚本语法检查未通过，已保留当前版本'); }
+  catch (_) { throw new Error('下载脚本语法检查未通过，未替换当前文件'); }
   return match[1];
 }
 
@@ -419,23 +419,13 @@ function newerVersion(remote, current) {
 }
 
 function installUpdate(fm, path, source) {
-  updateVersion(source);
+  validateUpdateSource(source);
   if (!path || !fm.fileExists(path)) throw new Error('找不到当前脚本文件，已取消更新');
-  const oldSource = fm.readString(path);
-  const backupDir = fm.joinPath(fm.documentsDirectory(), UF.folder + '/backups');
-  if (!fm.fileExists(backupDir)) fm.createDirectory(backupDir, true);
-  const backupPath = fm.joinPath(backupDir, 'UnicomFlow.previous.txt');
-  fm.writeString(backupPath, oldSource);
-  if (fm.readString(backupPath) !== oldSource) throw new Error('旧脚本备份失败，已取消更新');
   try {
     fm.writeString(path, source);
     if (fm.readString(path) !== source) throw new Error('写入校验失败');
   } catch (_) {
-    try {
-      fm.writeString(path, oldSource);
-      if (fm.readString(path) !== oldSource) throw new Error('还原校验失败');
-    } catch (_) { throw new Error('更新未完成，请使用 UnicomFlow/backups/UnicomFlow.previous.txt 中的备份恢复脚本'); }
-    throw new Error('更新写入失败，已恢复原脚本');
+    throw new Error('脚本写入未完成，请从仓库重新下载并替换脚本');
   }
 }
 
@@ -496,17 +486,18 @@ function createWidgetClass(DmYY) {
         const request = new Request(UF_UPDATE_URL + '?t=' + Date.now());
         request.timeoutInterval = 15;
         const source = await request.loadString();
-        const remote = updateVersion(source);
+        const remote = validateUpdateSource(source);
         if (!newerVersion(remote, UF_VERSION)) return alertMessage('无需更新', `当前版本 ${UF_VERSION}，已是最新版本。`);
-        const a = new Alert(); a.title = '发现新版本';
-        a.message = `${UF_VERSION} → ${remote}\n更新前会备份当前脚本，保留主题设置、历史数据和 QX Cookie。`;
-        a.addAction('更新'); a.addCancelAction('取消');
-        if (await a.presentAlert() < 0) return;
         const path = module.filename;
         const local = FileManager.local();
         const cloud = local.isFileStoredIniCloud(path);
         const fm = cloud ? FileManager.iCloud() : local;
         if (cloud) await fm.downloadFileFromiCloud(path);
+        if (!fm.fileExists(path)) throw new Error('找不到当前脚本文件，已取消更新');
+        const a = new Alert(); a.title = '发现脚本更新';
+        a.message = `${UF_VERSION} → ${remote}\n确认后直接替换脚本，保留主题设置、历史数据和 QX Cookie。`;
+        a.addAction('更新'); a.addCancelAction('取消');
+        if (await a.presentAlert() < 0) return;
         installUpdate(fm, path, source);
         await alertMessage('更新成功', `已更新到 ${remote}，关闭配置页后重新运行即可。`);
       } catch (error) {

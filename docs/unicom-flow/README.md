@@ -26,15 +26,15 @@
 
 ## 脚本更新
 
-首次安装使用[仓库原始脚本](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js)，当前版本 `1.0.0`。
+首次安装使用[仓库原始脚本](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js)。当前版本 `1.0.1`。
 
-菜单“组件配置 → 脚本更新”从本仓库的 `main/scriptable/UnicomFlow.js` 下载并检查版本、文件标识和 JavaScript 语法；只有远端版本更高时才提供更新确认。取消、下载失败或校验失败均不替换当前文件。
+菜单“组件配置 → 脚本更新”下载本仓库 `main/scriptable/UnicomFlow.js`，检查文件标识和 JavaScript 语法，并读取版本号。只有仓库版本更高时才提示更新，确认后直接替换，不创建备份；相同版本或旧版本不覆盖当前脚本。
 
-确认更新后，自动识别当前脚本位于本地或 iCloud，以当前文件的真实路径替换，脚本改名也能更新。覆盖前把旧内容保存到同一存储位置的 `UnicomFlow/backups/UnicomFlow.previous.txt`，写入后校验内容，写入失败尝试恢复原文件。每次更新只保留上一份备份。
+自动识别本地或 iCloud 文件，脚本改名也能更新。写入后核对内容；如果写入失败，提示从仓库重新下载。下载或内容校验失败、取消更新时不替换文件。
 
-主题和其他 DmYY 配置、历史快照、QX Cookie 不随更新清除。更新完成后关闭配置页、重新运行脚本。`DmYY.js` 不参与本菜单的更新。
+主题和其他 DmYY 配置、历史快照、QX Cookie 不随更新清除。更新后关闭配置页、重新运行脚本。`DmYY.js` 不参与本菜单的更新。
 
-后续发布新版本时需递增脚本中的 `UF_VERSION`（例如 `1.0.1`），并将脚本推送到 `main`。
+已安装 `1.0.0` 的用户可以从菜单更新。后续发布时递增 `UF_VERSION`（例如 `1.0.2`），再推送脚本内容。
 
 ## 显示规则
 

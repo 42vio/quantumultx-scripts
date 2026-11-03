@@ -23,6 +23,26 @@ function distributionFixture() {
   const api = await load.runInNewContext({ UNICOM_FLOW_TEST: true });
   const { parsePackages, megabytes, formatMB, updateHistory, todayBuckets } = api;
   const base = parsePackages(fixture());
+  const cardFixture=distributionFixture();
+  cardFixture.viceCardLits=[{number:'13000000001',role:'main'}, {number:'13000000002',role:'vice'}];
+  cardFixture.resources[0].details[0].viceCardlist=[{number:'13000000001',use:1.22*1024},{number:'13000000002',use:2*1024,currentLoginFlag:'1'}];
+  const cards=parsePackages(cardFixture);
+  assert.equal(cards.members.length,2); assert.equal(cards.members[0].role,'主卡'); assert.equal(cards.members[1].role,'副卡');
+  assert.equal(cards.members[1].current,true); assert.equal(cards.members[1].records[0].used,2048);
+  assert.equal(cards.members[0].records.length,1); // 非共享包没有归属数据，不推算到主卡
+  assert.equal(cards.packages[0].used,3.22*1024); // 共享总量保持不变
+  assert.equal(cards.members[0].phone,'130****0001');
+  assert.ok(!JSON.stringify(cards).includes('13000000001'));
+  const currentOnly=distributionFixture();
+  currentOnly.resources[0].details[0].viceCardlist=[{number:'13000000002',use:0,currentLoginFlag:'1'}];
+  const currentCard=parsePackages(currentOnly).members[0];
+  assert.equal(currentCard.role,'成员卡'); assert.equal(currentCard.records[0].used,0); // 当前登录不等于主卡
+  currentOnly.resources[0].details[0].viceCardlist.push({number:'13000000002',use:4});
+  const conflict=parsePackages(currentOnly).members[0];assert.equal(conflict.records[0].used,null);assert.equal(conflict.records[0].conflict,true);
+  const absent=distributionFixture();absent.viceCardLits=[{number:'13000000003'}];
+  assert.equal(parsePackages(absent).members[0].records.length,0);
+  assert.equal(parsePackages(fixture()).members.length,0);
+
   const distribution=parsePackages(distributionFixture());
   assert.equal(distribution.categories.directed,null); // 两项均为通用，不冒充定向
   assert.equal(distribution.categories.general.total,200*1024);
@@ -94,11 +114,11 @@ function distributionFixture() {
   class DrawContext {
     constructor() { this.parts=[]; }
     setFillColor(c) { this.fill=c.hex; } setTextColor(c) { this.text=c.hex; }
-    setFont(f) { this.font=f; } setTextAlignedLeft() {}
+    setFont(f) { this.font=f; } setTextAlignedLeft() {this.centered=false;} setTextAlignedCenter() {this.centered=true;}
     fillRect(r) { this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${this.fill}"/>`); }
     addPath(p) { this.path=p; }
     fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" fill="${this.fill}"/>`); }
-    drawTextInRect(t,r) { this.parts.push(`<text x="${r.x}" y="${r.y+this.font.size}" fill="${this.text}" font-family="${this.font.mono?'Menlo,monospace':'sans-serif'}" font-size="${this.font.size}">${esc(t)}</text>`); }
+    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.mono?'Menlo,monospace':'sans-serif'}" font-size="${this.font.size}">${esc(t)}</text>`); }
     getImage() { assert.ok(this.parts.length); return `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width*3}" height="${this.size.height*3}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="card"><rect width="100%" height="100%" rx="20"/></clipPath></defs><g clip-path="url(#card)">${this.parts.join('')}</g></svg>`; }
   }
   const Font = { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size}) };
@@ -111,6 +131,16 @@ function distributionFixture() {
   for (const [name,medium,width,height] of [['small',false,158,158],['medium',true,338,158]]) {
     fs.writeFileSync(`${output}/${name}.svg`,visual.renderImage({history,stale:false},medium,width,height));
     fs.writeFileSync(`${output}/${name}-empty.svg`,visual.renderImage({history:{...history,events:[],data:{...base,categories:{general:base.categories.general,directed:null},at:visualAt}},stale:true},medium,width,height));
+  }
+
+  // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
+  const aligned=visual.renderImage({history,stale:false},true,338,158);
+  const step=(338-40)/24;
+  for(const hour of [0,6,12,18,23]) {
+    const expected=20+(hour+0.5)*step;
+    const tick=aligned.match(new RegExp('<text x="([0-9.]+)"[^>]*text-anchor="middle"[^>]*>'+String(hour).padStart(2,'0')+'</text>'));
+    assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
+    assert.ok(aligned.includes(`x="${expected-0.25}" y="102"`));
   }
 
   // 小号在不同手机尺寸下使用相同的安全留白，正常状态省略贴近圆角的页脚。
@@ -134,7 +164,7 @@ function distributionFixture() {
 
   // 首次未配置、缓存降级及小组件启动分支均可完成，且只请求指定的 Cookie 字段。
   const files=new Map(); let requestCount=0, widget=null, completed=0, apiError=false;
-  let updateSource=source, cloudFile=false, cloudDownloads=0, failScriptWrite=false;
+  let updateSource=source, cloudFile=false, cloudDownloads=0, failScriptWrite=false, dataPayload=fixture();
   const alertChoices=[], alerts=[];
   class FileManager {
     static local(){return new FileManager();} static iCloud(){return new FileManager();}
@@ -146,13 +176,14 @@ function distributionFixture() {
     constructor(url){this.url=url;}
     async loadString(){assert.ok(this.url.startsWith('https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js?'));if(updateSource instanceof Error)throw updateSource;return updateSource;}
     async loadJSON(){requestCount++; if(this.url.includes('/query/data/')) return {val:'JSESSIONID=FAKE_TEST_ONLY;'};
-      if(apiError)throw new Error('offline'); return fixture();}
+      if(apiError)throw new Error('offline'); return dataPayload;}
   }
   class ListWidget {
     setPadding(){} addImage(){return {};} addText(){return {};} addSpacer(){}
   }
   class Alert {
     addAction(){} addCancelAction(){}
+    async presentSheet(){return this.presentAlert();}
     async presentAlert(){alerts.push({title:this.title,message:this.message});return alertChoices.length?alertChoices.shift():0;}
   }
   class MockDmYY {
@@ -171,7 +202,7 @@ function distributionFixture() {
     Font:{...Font,boldSystemFont:size=>({size}),systemFont:size=>({size})}, Device:{screenSize:()=>({width:390,height:844})},
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   const integration = await load.runInNewContext(environment);
-  await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget);
+  await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
   apiError=true; await integration.main(); assert.equal(completed,2); assert.ok(widget);
   files.clear(); await integration.main(); assert.equal(completed,3); assert.ok(widget);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
@@ -184,6 +215,7 @@ function distributionFixture() {
   const menus=instance._menuActions.flatMap(group=>group.menu);
   assert.equal(new Set(menus.map(item=>item.name)).size,menus.length);
   assert.ok(menus.some(item=>item.title==='组件主题' && item.options.join(',')==='黑色,白色'));
+  assert.ok(menus.some(item=>item.title==='主副卡用量'));
   assert.ok(menus.some(item=>item.title==='账户设置'));
   assert.ok(menus.some(item=>item.title==='代理缓存'));
   assert.ok(menus.some(item=>item.title==='颜色配置'));
@@ -206,11 +238,17 @@ function distributionFixture() {
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));
+  files.delete('/documents/UnicomFlow/history.json'); dataPayload=cardFixture;
+  alertChoices.push(1); await instance.showMembers();
+  assert.equal(alerts.at(-1).title,'副卡 130****0002');assert.ok(alerts.at(-1).message.includes('2.0GB'));
+  assert.ok(!alerts.at(-1).message.includes('13000000002'));
+  assert.ok(!Array.from(files.values()).join('').includes('13000000002'));
+  files.delete('/documents/UnicomFlow/history.json'); dataPayload=fixture();await instance.showMembers();assert.match(alerts.at(-1).message,/未返回成员用量/);
   instance.settings.flowBoxjsDomain='https://wrong/path';
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.2');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.3');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -220,7 +258,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.2';","const UF_VERSION = '1.0.3';");
+  updateSource=source.replace("const UF_VERSION = '1.0.3';","const UF_VERSION = '1.0.4';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');
@@ -233,5 +271,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

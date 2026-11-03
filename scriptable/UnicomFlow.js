@@ -18,7 +18,7 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.2';
+const UF_VERSION = '1.0.3';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -107,6 +107,45 @@ function sessionTag(cookie) {
   return (h >>> 0).toString(16);
 }
 
+function memberRows(rows, unit) {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap(raw => {
+    if (!raw || typeof raw !== 'object') return [];
+    const phone = ['serialNumber', 'userMobile', 'usernumber', 'number', 'mobile', 'phone', 'secretNumber']
+      .map(key => String(raw[key] || '').trim()).find(value => /^(?:\d{7,}|[\d*]*\*[\d*]*)$/.test(value));
+    if (!phone) return [];
+    const masked = phone.length >= 7 ? phone.slice(0, 3) + '****' + phone.slice(-4) : '****' + phone.slice(-2);
+    const roleValue = String(raw.role || raw.cardType || raw.numberFlag || raw.viceCardflag || '').toLowerCase();
+    const role = ['primary', 'main', '主卡'].includes(roleValue) ? '主卡'
+      : ['secondary', 'vice', '副卡'].includes(roleValue) ? '副卡' : '成员卡';
+    // 当前登录卡不等同于主卡，缺失角色时只显示成员卡。
+    return [{ id: sessionTag(phone), phone: masked, role, current: String(raw.currentLoginFlag) === '1', used: megabytes(raw.use, unit) }];
+  });
+}
+
+function summarizeMembers(body, packages) {
+  const members = new Map();
+  const get = row => {
+    if (!members.has(row.id)) members.set(row.id, { id: row.id, phone: row.phone, role: row.role, current: row.current, records: [] });
+    const member = members.get(row.id);
+    if (member.role === '成员卡' && !member.roleConflict) member.role = row.role;
+    else if (row.role !== '成员卡' && member.role !== row.role) { member.role = '成员卡'; member.roleConflict = true; }
+    member.current = member.current || row.current;
+    return member;
+  };
+  for (const row of memberRows(body.viceCardLits)) get(row);
+  for (const pkg of packages.filter(p => p.category !== 'ignore')) {
+    for (const row of pkg.members || []) {
+      const member = get(row);
+      const existing = member.records.find(record => record.packageId === pkg.id);
+      if (existing) {
+        if (existing.used !== row.used) { existing.used = null; existing.conflict = true; }
+      } else member.records.push({ packageId: pkg.id, name: pkg.name, used: row.used });
+    }
+  }
+  return [...members.values()];
+}
+
 function parsePackages(body, overrides = {}) {
   if (!body || String(body.code) !== '0000') {
     throw new Error('联通未返回套餐数据，请重新获取 Cookie 或稍后重试');
@@ -143,6 +182,7 @@ function parsePackages(body, overrides = {}) {
         const signature = JSON.stringify([used, total, remaining, unlimited]);
         if (seen.has(id)) {
           if (seen.get(id) !== signature) throw new Error('同一套餐出现不同数值，暂不汇总，请在联通 App 核对共享套餐');
+          packages.find(pkg => pkg.id === id).members.push(...memberRows(item.viceCardlist, item.unit));
           continue;
         }
         seen.set(id, signature);
@@ -154,7 +194,7 @@ function parsePackages(body, overrides = {}) {
           : /共享|5G畅爽冰激凌199元/.test(name) ? true : null;
         if (['general', 'directed', 'ignore'].includes(overrides[id])) category = overrides[id];
         if (['shared', 'exclusive'].includes(overrides[id])) { category = 'general'; shared = overrides[id] === 'shared'; }
-        packages.push({ id, name, category, shared, used, total: unlimited ? null : total, remaining, unlimited });
+        packages.push({ id, name, category, shared, used, total: unlimited ? null : total, remaining, unlimited, members: memberRows(item.viceCardlist, item.unit) });
       }
     }
   }
@@ -169,7 +209,7 @@ function parsePackages(body, overrides = {}) {
     } : null;
   }
   if (!categories.general && !categories.directed) throw new Error('当前流量包均已排除，请在“套餐分类”中选择要显示的套餐');
-  return { categories, packages, warnings: [...new Set(warnings)] };
+  return { categories, packages, members: summarizeMembers(body, packages), warnings: [...new Set(warnings)] };
 }
 
 function snapshotSignature(packages) {
@@ -266,10 +306,10 @@ async function refresh(store) {
 }
 
 // ---- 所有布局均由 Scriptable 原生绘图生成 ----
-function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false) {
+function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false) {
   ctx.setTextColor(new Color(color));
   ctx.setFont(mono ? Font.regularMonospacedSystemFont(size) : Font.mediumSystemFont(size));
-  ctx.setTextAlignedLeft();
+  if (centered) ctx.setTextAlignedCenter(); else ctx.setTextAlignedLeft();
   ctx.drawTextInRect(value, new Rect(x, y, width, height));
 }
 
@@ -301,7 +341,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
 
 function renderImage(result, medium, width, height) {
   // 统一为 158 点设计高度，再随组件尺寸缩放，避免小屏沿用固定坐标而挤入圆角。
-  width = width * 158 / height;
+  width = Math.round(width * 158 / height);
   height = 158;
   const ctx = new DrawContext();
   ctx.size = new Size(width, height);
@@ -321,19 +361,20 @@ function renderImage(result, medium, width, height) {
     text(ctx, buckets.some(b => b.samples) ? '今日区间用量 · 采样小时' : result.history.note,
       chartX, 87, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
-      const x = chartX + hour * cell;
+      const center = chartX + (hour + 0.5) * cell;
+      const barWidth = Math.max(1, cell - 3);
       ctx.setFillColor(new Color(hour % 6 === 0 ? UF.gridMajor : UF.gridMinor));
-      ctx.fillRect(new Rect(x, chartY, 0.5, chartH));
+      ctx.fillRect(new Rect(center - 0.25, chartY, 0.5, chartH));
       if (bucket.mb > 0) {
         const h = Math.max(1, bucket.mb / max * chartH);
         ctx.setFillColor(new Color(UF.purple));
-        ctx.fillRect(new Rect(x + 1, chartY + chartH - h, Math.max(1, cell - 3), h));
+        ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - h, barWidth, h));
       } else if (bucket.samples) {
         ctx.setFillColor(new Color(UF.purple));
-        ctx.fillRect(new Rect(x + 1, chartY + chartH - 1, Math.max(1, cell - 3), 1));
+        ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - 1, barWidth, 1));
       }
     });
-    [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + h * cell - (h === 23 ? 4 : 0), chartY + chartH + 2, 18, 10, 7, UF.muted, true));
+    [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
   } else {
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 17, width - 2 * pad, true);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 85, width - 2 * pad, true);
@@ -365,9 +406,8 @@ function makeWidget(result, medium) {
   widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
-  const image = widget.addImage(renderImage(result, medium, size.width, size.height));
-  image.imageSize = new Size(size.width, size.height);
-  image.resizable = true;
+  // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
+  widget.backgroundImage = renderImage(result, medium, size.width, size.height);
   return widget;
 }
 
@@ -516,6 +556,23 @@ function createWidgetClass(DmYY) {
       await alertMessage('代理缓存', this.failure || '已直接读取 QX 的联通 Cookie 并刷新套餐。现在可预览组件；Cookie 不会保存到组件设置。');
     }
 
+    async showMembers() {
+      await this.loadResult();
+      if (!this.result) return alertMessage('主副卡用量', this.failure);
+      const members = this.result.history.data.members || [];
+      if (!members.length) return alertMessage('主副卡用量', '本次套餐接口未返回成员用量，无法从共享池总量推算主副卡分别用了多少。');
+      const a = new Alert(); a.title = '主副卡用量';
+      a.message = (this.result.stale ? '当前为缓存数据。\n' : '') + '按卡查看接口返回的流量包明细；角色未标明时显示“成员卡”。';
+      members.forEach(member => a.addAction(`${member.role} ${member.phone}${member.current ? ' · 当前登录' : ''}`));
+      a.addCancelAction('取消'); const index = await a.presentSheet(); if (index < 0) return;
+      const member = members[index];
+      const lines = member.records.map(record => `${record.name}\n已用：${record.conflict ? '返回数值不一致' : formatMB(record.used)}`);
+      const known = member.records.filter(record => record.used != null && !record.conflict);
+      const summary = known.length ? `已返回明细合计：${formatMB(known.reduce((sum, record) => sum + record.used, 0))}\n\n` : '';
+      await alertMessage(`${member.role} ${member.phone}`, summary + (lines.join('\n\n') || '接口未返回这张卡的用量。')
+        + '\n\n仅统计接口明确归属这张卡的用量，缺失项显示 --，不代表整张卡的全部用量。');
+    }
+
     async connectionStatus() {
       await this.loadResult();
       await alertMessage('连接检查', this.failure || `QX Cookie：已读取\n套餐接口：成功\n识别流量包：${this.result.history.data.packages.length}\n${this.result.history.data.warnings.join('\n')}\n\nCookie 未写入文件或日志。`);
@@ -571,6 +628,7 @@ function createWidgetClass(DmYY) {
       this.registerAction({ title: '账户与数据', menu: [
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
+        action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
         action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),
         action('flowStatus', '连接检查', 'network', '#007AFF', () => this.connectionStatus()),
       ] });

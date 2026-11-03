@@ -18,7 +18,7 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.6';
+const UF_VERSION = '1.0.7';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -82,7 +82,7 @@ function displayMetrics(data, mode = '统一显示') {
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
-    return { left: sumPackages(shared), right: sumPackages(exclusive), leftLabel: '共享通用', rightLabel: '非共享通用', omitted };
+    return { left: sumPackages(shared), right: sumPackages(exclusive), leftLabel: '主卡+副卡', rightLabel: '主卡', omitted };
   }
   return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false };
 }
@@ -485,7 +485,7 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
 }
 
 function drawMetric(ctx, metric, label, x, y, width, compact) {
-  const title = label.length > 2 ? label : '数据流量·' + label;
+  const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
   text(ctx, title, x, y, width, 15, compact ? 10 : 11);
   const barY = y + (compact ? 16 : 20), barH = compact ? 36 : 38;
   roundedRect(ctx, x, barY, 6, barH, 3, UF.track);

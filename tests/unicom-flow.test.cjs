@@ -31,7 +31,7 @@ function distributionFixture() {
   assert.equal(splitCards.leftLabel,'主卡·0001'); assert.equal(splitCards.rightLabel,'副卡·0002');
   assert.equal(splitCards.left.used,1.22*1024); assert.equal(splitCards.right.used,2*1024);
   assert.equal(splitCards.left.total,null); assert.equal(splitCards.left.detail,'已返回明细合计');
-  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'共享通用');
+  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'主卡+副卡');
   const variant=distributionFixture();variant.viceCardList=[{number:'13000000001',role:'main'}];
   variant.shareData={details:[{feePolicyId:'main',feePolicyName:'5G畅爽冰激凌199元（首月全量全价）（上月结转限本月使用）',elemType:'3',viceCardList:[{number:'13000000001',use:20}]}]};
   const variantData=parsePackages(variant);assert.equal(variantData.members[0].records[0].used,20);
@@ -115,13 +115,13 @@ function distributionFixture() {
   assert.equal(distribution.categories.general.total,200*1024);
   assert.ok(Math.abs(distribution.categories.general.used/1024-12.03)<1e-9);
   const split=api.displayMetrics(distribution);
-  assert.equal(split.leftLabel,'共享通用'); assert.equal(split.rightLabel,'非共享通用');
+  assert.equal(split.leftLabel,'主卡+副卡'); assert.equal(split.rightLabel,'主卡');
   assert.equal(split.left.total,120*1024); assert.equal(split.right.total,80*1024);
   assert.equal(formatMB(split.left.used),'3.22GB'); assert.equal(formatMB(split.right.used),'8.81GB');
   const insideResources=distributionFixture(); insideResources.resources[0].details.push(insideResources.unshared[0].details[0]);delete insideResources.unshared;
   assert.equal(api.displayMetrics(parsePackages(insideResources)).right.total,80*1024); // 赠送包名称识别
   const forced=parsePackages(fixture(),{[base.packages[0].id]:'shared',[base.packages[1].id]:'exclusive'});
-  assert.equal(api.displayMetrics(forced).rightLabel,'非共享通用');
+  assert.equal(api.displayMetrics(forced).rightLabel,'主卡');
   assert.equal(api.displayMetrics(base).leftLabel,'通用'); // 无可靠共享信息时不猜测
   const extra=distributionFixture();extra.mlresources=[{type:'flow',details:[{feePolicyId:'other',feePolicyName:'定向',total:1,use:0.01,remain:0.99}]}];
   assert.equal(api.displayMetrics(parsePackages(extra)).omitted,true);
@@ -335,7 +335,7 @@ function distributionFixture() {
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
   // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.6');
+  assert.equal(appApi.validateUpdateSource(source),'1.0.7');
   assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
   assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
   assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
@@ -345,7 +345,7 @@ function distributionFixture() {
   files.set(path,source);
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.6';","const UF_VERSION = '1.0.7';");
+  updateSource=source.replace("const UF_VERSION = '1.0.7';","const UF_VERSION = '1.0.8';");
   alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
   assert.equal(alerts.at(-1).title,'更新成功');

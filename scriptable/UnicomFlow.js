@@ -589,12 +589,15 @@ function renderImage(result, medium, width, height) {
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
-  const label = result.stale ? `缓存 ${dayKey(data.at).slice(5)} ${time} · 点击重试`
-    : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
-  // 正常的小号组件省略页脚，给底部留出完整留白；异常缓存仍明确提示。
-  if (medium || result.stale || data.warnings.length || metrics.omitted || metrics.perMember || incomplete) {
-    text(ctx, label, pad + 2, height - (medium ? 18 : 14), width - 2 * pad - 4, 9, 6.5, result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
-  }
+  const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击重试`
+    : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
+  const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`
+    : incomplete ? '逐卡明细不全' : metrics.perMember ? '逐卡明细' : status ? '另有明细' : '';
+  const label = medium ? status ? `${time} · ${status}` : `↻ ${time} · 点击刷新`
+    : compactStatus ? `${time} · ${compactStatus}` : `↻ ${time} · 点击刷新`;
+  // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
+  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
+    result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   return ctx.getImage();
 }
 
@@ -607,11 +610,15 @@ function widgetSize(medium) {
   return { width: medium ? closest[2] : closest[1], height: closest[1] };
 }
 
+function refreshURL(medium) {
+  return 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) + '&ufRefresh=1&ufFamily=' + (medium ? 'medium' : 'small');
+}
+
 function makeWidget(result, medium) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
+  widget.url = refreshURL(medium);
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
@@ -619,14 +626,14 @@ function makeWidget(result, medium) {
   return widget;
 }
 
-function errorWidget(message) {
+function errorWidget(message, medium = false) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(15, 15, 15, 15);
   const title = widget.addText('联通流量'); title.textColor = new Color(UF.text); title.font = Font.boldSystemFont(16);
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
-  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
+  widget.url = refreshURL(medium);
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
   return widget;
 }
@@ -715,7 +722,7 @@ function createWidgetClass(DmYY) {
     async render() {
       if (!['small', 'medium'].includes(this.widgetFamily)) return errorWidget('请添加小号或中号组件');
       await this.loadResult();
-      return this.result ? makeWidget(this.result, this.widgetFamily === 'medium') : errorWidget(this.failure);
+      return this.result ? makeWidget(this.result, this.widgetFamily === 'medium') : errorWidget(this.failure, this.widgetFamily === 'medium');
     }
 
     // Runing 根据这些方法生成“小尺寸 / 中尺寸”预览入口。
@@ -859,6 +866,16 @@ async function main() {
     Script.complete(); return;
   }
   const Widget = createWidgetClass(dependency.DmYY);
+  // 卡片点击走独立查询入口，避免 DmYY 仅打开配置菜单而不查数据。
+  if (config.runsInApp && args.queryParameters && args.queryParameters.ufRefresh === '1') {
+    const instance = new Widget(args.widgetParameter || '');
+    const medium = args.queryParameters.ufFamily === 'medium';
+    instance.widgetFamily = medium ? 'medium' : 'small';
+    const widget = await instance.render();
+    Script.setWidget(widget);
+    if (medium) await widget.presentMedium(); else await widget.presentSmall();
+    Script.complete(); return;
+  }
   await dependency.Runing(Widget, args.widgetParameter || '', false);
 }
 

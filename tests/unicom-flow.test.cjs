@@ -240,10 +240,10 @@ function distributionFixture() {
     assert.ok(aligned.includes(`x="${expected-0.25}" y="105"`));
   }
 
-  // 小号在不同手机尺寸下使用相同的安全留白，正常状态省略贴近圆角的页脚。
+  // 小号在不同手机尺寸下使用相同的安全留白，始终显示查询时间与刷新入口。
   for (const side of [141,158,170]) {
     const image=visual.renderImage({history,stale:false},false,side,side);
-    assert.ok(!image.includes('已用 / 总量'));
+    assert.ok(image.includes('点击刷新')); assert.ok(/↻ \d{2}:\d{2}/.test(image));
     const textPositions=[...image.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"/g)];
     assert.ok(textPositions.length>=6);
     assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=14&&Number(m[2])<=150));
@@ -280,7 +280,9 @@ function distributionFixture() {
       lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
+  const presented=[];
   class ListWidget {
+    async presentSmall(){presented.push('small');} async presentMedium(){presented.push('medium');}
     setPadding(){} addImage(){return {};} addText(value){(this.texts=this.texts||[]).push(String(value));return {};} addSpacer(){}
   }
   class Alert {
@@ -325,6 +327,21 @@ function distributionFixture() {
   // App 打开配置页不查账号；DnYY 分组菜单的代理缓存仍直读指定 Cookie。
   const appApi = await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
   const AppWidget=appApi.createWidgetClass(MockDmYY);
+  // 点击两种尺寸的卡片均直接查询并展示对应预览，不经过配置入口。
+  for(const family of ['small','medium']) {
+    const tapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:family}}});
+    const prior=requestCount;
+    await tapApi.main();
+    assert.equal(requestCount,prior+2); assert.equal(presented.at(-1),family);
+    assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');
+    assert.equal(new URL(widget.url).searchParams.get('ufFamily'),family);
+    assert.ok(widget.backgroundImage.includes('点击刷新'));
+  }
+  apiError=true;
+  const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
+  await staleApi.main(); assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
+  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');
+  apiError=false;
   const before=requestCount;
   const instance=new AppWidget('');
   assert.equal(requestCount,before);

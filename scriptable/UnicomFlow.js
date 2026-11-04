@@ -781,15 +781,17 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   const detailSize = Math.min(compact ? 10 : 11, textWidth / Math.max(1, detail.length * 0.7));
   text(ctx, detail, textX, y + 43, textWidth, 13, detailSize, metric ? UF.muted : UF.warning, 'number');
   const barY = y + 18, barH = 37, barW = 5;
-  roundedRect(ctx, x, barY, barW, barH, 2.5, UF.track);
+  // 小圆角矩形：横纵圆角相同，短彩条也保留平直边缘。
+  const bar = (top, height, color) => roundedRect(ctx, x, top, barW, height, Math.min(barW, height) / 4, color);
+  bar(barY, barH, UF.track);
   if (metric && metric.composition) {
     const c = metric.composition;
     // 彩条按套餐总量分别表示主副卡已用量，未用部分保留灰色。自底部向上增长，超额时按已用构成缩放至条高。
     if (c.complete && metric.used > 0 && metric.total > 0) {
       const scale = barH / Math.max(metric.total, c.main + c.vice);
       const mainHeight = c.main * scale, viceHeight = c.vice * scale;
-      if (c.main > 0) roundedRect(ctx, x, barY + barH - mainHeight, barW, mainHeight, 2.5, UF.blue);
-      if (c.vice > 0) roundedRect(ctx, x, barY + barH - mainHeight - viceHeight, barW, viceHeight, 2.5, UF.purple);
+      if (c.main > 0) bar(barY + barH - mainHeight, mainHeight, UF.blue);
+      if (c.vice > 0) bar(barY + barH - mainHeight - viceHeight, viceHeight, UF.purple);
     }
     if (!(c.complete && c.main === 0)) {
       const half = width / 2;
@@ -800,7 +802,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
     }
   } else if (metric && metric.total > 0) {
     const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
-    roundedRect(ctx, x, barY + barH * (1 - ratio), barW, barH * ratio, 2.5, UF.blue);
+    bar(barY + barH * (1 - ratio), barH * ratio, UF.blue);
   }
 }
 

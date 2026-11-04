@@ -647,22 +647,22 @@ function makeWidget(result, medium) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height);
   if (medium) {
-    // 仅右上角 44×44 区域刷新，其他位置全部打开配置。
+    // 仅右上角 44×44 区域刷新，其他位置不设链接，遵循用户的小组件点击设置。
     const row = widget.addStack(); row.layoutHorizontally(); row.spacing = 0;
     row.size = new Size(size.width, size.height);
     const content = row.addStack(); content.size = new Size(size.width - 44, size.height);
-    content.url = widget.url; content.addSpacer();
+    content.addSpacer();
     const right = row.addStack(); right.layoutVertically(); right.spacing = 0;
     right.size = new Size(44, size.height);
-    for (const [height, url] of [[44, refreshURL(true)], [size.height - 44, widget.url]]) {
+    for (const [height, url] of [[44, refreshURL(true)], [size.height - 44, null]]) {
       const area = right.addStack(); area.size = new Size(44, height);
-      area.url = url; area.setPadding(0, 0, 0, 0); area.addSpacer();
+      if (url) area.url = url;
+      area.setPadding(0, 0, 0, 0); area.addSpacer();
     }
   }
 
@@ -676,7 +676,6 @@ function errorWidget(message, medium = false) {
   const title = widget.addText('联通流量'); title.textColor = new Color(UF.text); title.font = Font.boldSystemFont(16);
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
-  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
   return widget;
 }

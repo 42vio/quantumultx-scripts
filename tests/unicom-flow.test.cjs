@@ -349,6 +349,7 @@ function distributionFixture() {
     const message=feedback.at(-1);
     assert.equal(message.requestsAtOpen,prior);assert.equal(message.presented,true);
     assert.ok(message.html.includes('正在刷新'));assert.ok(message.updates.join('').includes('刷新成功'));
+    assert.equal(widget.url,undefined); // 不覆盖系统配置的 Open App / Run Script / Open Script / Open URL
     assert.ok(widget.backgroundImage.includes('已刷新'));assert.ok(!widget.backgroundImage.includes('点击刷新'));
     if(family==='medium') {
       const areas=widget.children[0].children;
@@ -357,18 +358,18 @@ function distributionFixture() {
       const icon=areas[1].children[0], rest=areas[1].children[1];
       assert.equal(icon.size.width,44);assert.equal(icon.size.height,44);
       assert.equal(rest.size.height,114);
-      assert.equal(new URL(rest.url).searchParams.has('ufRefresh'),false);
+      assert.equal(rest.url,undefined);
       assert.ok(widget.backgroundImage.includes('↻'));
-      assert.equal(new URL(areas[0].url).searchParams.has('ufRefresh'),false);
+      assert.equal(areas[0].url,undefined);
       assert.equal(new URL(icon.url).searchParams.get('ufFamily'),'medium');
       assert.equal(new URL(icon.url).searchParams.get('ufRefresh'),'1');
-    } else { assert.equal(new URL(widget.url).searchParams.has('ufRefresh'),false);assert.equal(widget.children.length,0);assert.ok(!widget.backgroundImage.includes('↻')); }
+    } else { assert.equal(widget.url,undefined);assert.equal(widget.children.length,0);assert.ok(!widget.backgroundImage.includes('↻')); }
 
   }
   apiError=true;
   const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
   await staleApi.main(); assert.ok(feedback.at(-1).updates.join('').includes('刷新失败'));assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
-  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(new URL(widget.url).searchParams.has('ufRefresh'),false);
+  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(widget.url,undefined);
   apiError=false;
   const before=requestCount;
   const instance=new AppWidget('');

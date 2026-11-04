@@ -142,6 +142,9 @@ function distributionFixture() {
   assert.equal(base.categories.directed.used, 38604.8);
   assert.equal(formatMB(base.categories.general.used), '2.3GB');
   assert.equal(formatMB(null), '--');
+  assert.equal(formatMB(12.03*1024),'12.0GB');assert.equal(formatMB(37.77*1024),'37.8GB');
+  assert.equal(formatMB(515.27),'515.3MB');assert.equal(formatMB(9.87*1024),'9.87GB');
+  assert.equal(formatMB(10.01),'10.0MB');assert.equal(formatMB(10),'10.0MB');
   assert.equal(megabytes('1,024 MB'), 1024);
   assert.equal(megabytes('2', 'GB'), 2048);
   assert.equal(megabytes('not-a-number'), null);

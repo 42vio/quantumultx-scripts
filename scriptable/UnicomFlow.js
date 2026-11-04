@@ -149,7 +149,8 @@ function megabytes(value, unit) {
 function formatMB(value) {
   if (value == null || !Number.isFinite(value)) return '--';
   const scale = value >= 1048576 ? [1048576, 'TB'] : value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
-  return `${(value / scale[0]).toFixed(2).replace(/(\.\d)0$/, '$1')}${scale[1]}`;
+  const displayed = value / scale[0];
+  return `${displayed.toFixed(displayed > 10 ? 1 : 2).replace(/(\.\d)0$/, '$1')}${scale[1]}`;
 }
 
 function dayKey(time) {

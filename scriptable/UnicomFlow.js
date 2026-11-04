@@ -818,15 +818,15 @@ function renderImage(result, medium, width, height) {
   ctx.fillRect(new Rect(0, 0, width, height));
   const data = result.history.data, pad = 13;
   const metrics = displayMetrics(data, UF.displayMode);
+  const buckets = medium ? todayBuckets(result.history, Date.now()) : [];
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false);
-    const buckets = todayBuckets(result.history, Date.now());
     const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
-    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
+    text(ctx, '今日用量',
       chartX, 90, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
@@ -864,13 +864,19 @@ function renderImage(result, medium, width, height) {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - (medium ? 104 : 4), 9, 6.5,
+  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - (medium ? 152 : 4), 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = height - 18, legendX = width - pad - 90;
-    [[UF.blue, '主卡'], [UF.purple, '副卡'], [UF.warning, '未分']].forEach(([color, label], index) => {
-      roundedRect(ctx, legendX + index * 31, legendY + 3, 2.5, 2.5, 1.25, color);
-      text(ctx, label, legendX + index * 31 + 5, legendY, 16, 9, 6.5, UF.muted);
+    const legendY = height - 18, legendX = width - pad - 144;
+    const sampled = buckets.some(b => b.samples);
+    const unknown = buckets.reduce((sum, b) => sum + b.unknownMB, 0);
+    [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].forEach(([color, name, key], index) => {
+      const used = buckets.reduce((sum, b) => sum + b[key], 0);
+      // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
+      const value = sampled && (used > 0 || unknown === 0) ? formatMB(used) : '—';
+      const x = legendX + index * 74;
+      roundedRect(ctx, x, legendY + 3, 2.5, 2.5, 1.25, color);
+      text(ctx, name + ' ' + value, x + 5, legendY, 65, 9, 6.5, UF.muted);
     });
     // 使用文字颜色绘制图标，点击区域另由透明布局提供。
     text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);

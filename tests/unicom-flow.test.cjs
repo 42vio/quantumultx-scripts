@@ -433,7 +433,7 @@ function distributionFixture() {
   const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
-  const footerLegend=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>主卡<\/text>/);
+  const footerLegend=aligned.match(/<text x="186" y="([0-9.]+)"[^>]*>主 [^<]+<\/text>/);
   const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>更新 [^<]+<\/text>/);
   assert.ok(footerLegend);assert.ok(footerTime);assert.equal(footerLegend[1],footerTime[1]);
   const step=(338-26)/24;
@@ -456,9 +456,16 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158);
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
+  assert.ok(dayImage.includes('>今日用量</text>'));assert.ok(dayImage.includes('>主 —</text>'));assert.ok(dayImage.includes('>副 —</text>'));
+  assert.ok(zeroImage.includes('>主 0.0MB</text>'));assert.ok(zeroImage.includes('>副 0.0MB</text>'));
+  assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
+  const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158);
+  assert.ok(unknownImage.includes('>主 —</text>'));assert.ok(unknownImage.includes('>副 —</text>'));
+
 
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
+  assert.ok(stackedWidget.includes('>主 60.0MB</text>'));assert.ok(stackedWidget.includes('>副 30.0MB</text>'));
   const hour10x=13+(10+0.5)*13-5;
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23*60/90}" width="10" height="${23*60/90}" fill="#0A94FF"`));
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23}" width="10" height="${23*30/90}" fill="#8A73FF"`));

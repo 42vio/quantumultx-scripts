@@ -201,7 +201,7 @@ function distributionFixture() {
   }
   let unavailableFont=false;
   class Font { constructor(name,size) { if(unavailableFont) throw new Error('missing font'); Object.assign(this,{name,size}); } }
-  Object.assign(Font, { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size,weight:500}), systemFont:size=>({size}) });
+  Object.assign(Font, { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size,weight:500}), systemFont:size=>({size}), lightSystemFont:size=>({size,weight:300}), regularSystemFont:size=>({size,weight:400}) });
   const visual = await load.runInNewContext({ UNICOM_FLOW_TEST: true, Color, Rect, Size, Path, DrawContext, Font });
   const output = '/private/tmp/unicom-flow-preview'; fs.mkdirSync(output,{recursive:true});
   const visualAt = Date.now();
@@ -395,11 +395,17 @@ function distributionFixture() {
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
   const fontMenu=instance._menuActions.flatMap(group=>group.menu).find(item=>item.val==='numberFont');
-  assert.equal(fontMenu.options.length,5);
+  assert.equal(fontMenu.options.length,7);
   for(const [label,family] of [['Menlo','Menlo-Regular'],['Helvetica Neue','HelveticaNeue'],['Avenir Next 窄体','AvenirNextCondensed-Regular'],['系统等宽','Menlo,monospace'],['系统默认','sans-serif'],['未知旧设置','sans-serif']]) {
     instance.settings.numberFont=label; const fontWidget=await instance.renderSmall();
     assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}"`));
     assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}" font-weight="400" font-size="22"`));
+  }
+  for(const [label,weight] of [['SF Pro Light（细体）',300],['SF Pro Regular（常规）',400]]) {
+    instance.settings.numberFont=label;
+    const sfWidget=await instance.renderSmall();
+    assert.ok(sfWidget.backgroundImage.includes(`font-weight="${weight}" font-size="22"`));
+    assert.ok(sfWidget.backgroundImage.includes(`font-weight="${weight}" font-size="10"`));
   }
   unavailableFont=true; instance.settings.numberFont='Menlo';
   const fallbackFontWidget=await instance.renderSmall();

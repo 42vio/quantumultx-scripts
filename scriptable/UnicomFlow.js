@@ -39,6 +39,8 @@ const UF_DEFAULTS = { ...UF };
 // 仅保留便于阅读数字的系统字体，不下载外部字体。
 const UF_NUMBER_FONTS = {
   '系统默认': null,
+  'SF Pro Light（细体）': 'system-light',
+  'SF Pro Regular（常规）': 'system-regular',
   '系统等宽': 'system-mono',
   'Menlo': 'Menlo-Regular',
   'Helvetica Neue': 'HelveticaNeue',
@@ -509,6 +511,8 @@ async function refresh(store) {
 // ---- 所有布局均由 Scriptable 原生绘图生成 ----
 function numberFont(size) {
   const name = UF_NUMBER_FONTS[UF.numberFont];
+  if (name === 'system-light') return Font.lightSystemFont(size);
+  if (name === 'system-regular') return Font.regularSystemFont(size);
   if (name === 'system-mono') return Font.regularMonospacedSystemFont(size);
   if (name) {
     try { return new Font(name, size) || Font.systemFont(size); }

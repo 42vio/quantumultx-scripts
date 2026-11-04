@@ -463,6 +463,15 @@ function updateMonths(previous, sample, prev, interval, note) {
   return months;
 }
 
+function usageSummary(records) {
+  if (!records.length) return { mb: null, mainMB: null, viceMB: null, unknownMB: null };
+  return records.reduce((sum, record) => {
+    sum.mb += record.mb;
+    for (const [key, value] of Object.entries(eventParts(record))) sum[key] += value;
+    return sum;
+  }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
+}
+
 function monthlyReport(history, at = Date.now()) {
   const date = new Date(at), month = dayKey(at).slice(0, 7), today = dayKey(at);
   const savedMonths = history.months || {};
@@ -474,8 +483,11 @@ function monthlyReport(history, at = Date.now()) {
       mainMB: d && d.intervals ? d.mainMB : null, viceMB: d && d.intervals ? d.viceMB : null, unknownMB: d && d.intervals ? d.unknownMB : null,
       intervals: d ? d.intervals : 0, first: d ? d.first : null, last: d ? d.last : null, notes: d ? d.notes : [] };
   });
-  const crossDay = (saved.crossDay || []).filter(e => Number.isFinite(e.mb) && e.mb >= 0);
-  return { month, today, days, totalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
+  const crossDay = (saved.crossDay || []).filter(e => Number.isFinite(e.mb) && e.mb >= 0
+    && dayKey(e.from).slice(0, 7) === month && dayKey(e.at).slice(0, 7) === month);
+  const summary = usageSummary([...days.filter(d => d.mb != null), ...crossDay]);
+  return { month, today, days, totalMB: summary.mb, summary,
+    dayTotalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
     crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
 }
 
@@ -488,21 +500,26 @@ function yearlyReport(history, at = Date.now()) {
     // 同月跨日区间无法拆到某一天，但可以准确归入该月，只计一次。
     const cross = (saved && saved.crossDay || []).filter(e => dayKey(e.from).slice(0, 7) === key && dayKey(e.at).slice(0, 7) === key);
     const records = [...daily.filter(d => d.intervals > 0), ...cross];
-    const parts = records.reduce((total, e) => {
-      total.mb += e.mb;
-      for (const [name, value] of Object.entries(eventParts(e))) total[name] += value;
-      return total;
-    }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
+    const parts = usageSummary(records);
     const first = daily.map(d => d.first).filter(Number.isFinite), last = daily.map(d => d.last).filter(Number.isFinite);
-    return { key, day: key.slice(5) + '月', future: false,
+    const notes = [...new Set(daily.flatMap(d => d.notes).filter(note => note !== '跨日区间未分配'))];
+    const end = dayKey(new Date(now.getFullYear(), now.getMonth() - 10 + index, 0).getTime());
+    const partial = records.length > 0 && (!first.length || !last.length || notes.length > 0
+      || dayKey(Math.min(...first)) !== key + '-01' || dayKey(Math.max(...last)) !== end);
+    return { key, day: key.slice(5) + '月', future: false, partial,
       mb: records.length ? parts.mb : null, mainMB: records.length ? parts.mainMB : null,
       viceMB: records.length ? parts.viceMB : null, unknownMB: records.length ? parts.unknownMB : null,
       intervals: daily.reduce((sum, d) => sum + d.intervals, 0) + cross.length,
       first: first.length ? Math.min(...first) : null, last: last.length ? Math.max(...last) : null,
-      notes: [...new Set(daily.flatMap(d => d.notes).filter(note => note !== '跨日区间未分配'))] };
+      notes };
   });
-  return { period: 'months', month: current, today: current, days,
-    totalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
+  // 月均仅对已结束且有记录的月份计算；当前月与无数据月份不补零。
+  const ended = days.filter(d => d.key < current && d.mb != null);
+  const average = usageSummary(ended);
+  if (ended.length) for (const key of ['mb', 'mainMB', 'viceMB', 'unknownMB']) average[key] /= ended.length;
+  average.monthCount = ended.length;
+  average.partialMonthCount = ended.filter(d => d.partial).length;
+  return { period: 'months', month: current, today: current, days, average,
     crossDay: [], unallocatedMB: 0, lastSuccess: history.data.at };
 }
 
@@ -534,10 +551,10 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   const light = parseInt(UF.bg.slice(0, 2), 16) * 0.299 + parseInt(UF.bg.slice(2, 4), 16) * 0.587 + parseInt(UF.bg.slice(4, 6), 16) * 0.114 > 150;
   const surface = light ? 'FFFFFF' : '242426', page = light ? 'F3F5F9' : '151517';
   const border = light ? 'E7EAF0' : '343438', soft = light ? 'F6F8FC' : '2D2D31';
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><style>
   :root{color-scheme:${light ? 'light' : 'dark'};--text:#${UF.text};--muted:#${UF.muted};--blue:#${UF.blue};--purple:#${UF.purple};--warning:#${UF.warning};--line:#${border};--surface:#${surface};--soft:#${soft}}
-  *{box-sizing:border-box}body{margin:0;background:#${page};color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;-webkit-text-size-adjust:100%}button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
-  .shell{max-width:760px;margin:auto;padding:26px 18px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}h1{font-size:26px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
+  *{box-sizing:border-box;touch-action:manipulation}body{margin:0;background:#${page};color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;-webkit-text-size-adjust:100%}button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
+  .shell{max-width:760px;margin:auto;padding:calc(64px + env(safe-area-inset-top,0px)) 18px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}h1{font-size:26px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
   .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:20px}.tab{border:0;background:transparent;padding:10px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:22px 20px}.period-label{font-size:13px;color:var(--muted)}.total{margin:10px 0 12px;font-variant-numeric:tabular-nums;letter-spacing:-1.5px;font-size:42px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
   h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--muted);margin:15px 0 8px}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
@@ -547,39 +564,40 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
   </style></head><body><main class="shell">
   <header><div><h1>用量统计</h1><div class="eyebrow">采样记录 · 非运营商账单</div></div><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></header>
-  <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">小时</button><button class="tab" id="tab-month" type="button">本月</button><button class="tab" id="tab-year" type="button">近12个月</button></nav>
-  <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i>主卡</div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i>副卡</div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
+  <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">今日</button><button class="tab" id="tab-month" type="button">本月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
+  <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i><span id="main-label">主卡</span></div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i><span id="vice-label">副卡</span></div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
   <section class="card"><div class="card-head"><h2 id="chart-title"></h2><span id="chart-count" class="hint"></span></div><div class="legend"><span><i class="dot blue"></i>主卡</span><span><i class="dot purple"></i>副卡</span><span id="unknown-legend"><i class="dot amber"></i>未确认</span><span><i class="dot gray"></i>无数据</span></div><div class="scroll"><div id="chart" class="chart"></div></div><div id="chart-foot" class="chart-foot"></div></section>
   <section class="card"><div class="selected-heading"><h2 id="selected"></h2><span id="selected-total" class="selected-value"></span></div><div class="selected-cards"><span id="selected-main" class="main"></span><span id="selected-vice" class="vice"></span><span id="selected-unknown" class="unconfirmed"></span></div><div id="detail" class="detail"></div><p id="selected-note" class="status-note"></p></section>
   <section class="card table-card"><div class="card-head"><h2>明细记录</h2><span class="hint">左右滑动查看全部</span></div><div class="scroll"><table><thead><tr><th id="date-heading"></th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div></section>
-  <section class="card" id="cross-card"><details><summary id="cross-summary"></summary><p>这部分用量无法准确拆到某天或小时，未计入上方合计。</p><div id="cross-events"></div></details></section>
+  <section class="card" id="cross-card"><details><summary id="cross-summary"></summary><p id="cross-description"></p><div id="cross-events"></div></details></section>
   <section class="card"><details><summary>统计口径与数据缺口</summary><p id="scope"></p><p>只统计成功查询间可确认的增量。无数据不等于零；短柱只是占位，用量以数值为准。套餐变更、累计计数回退或跨月时重新建立基线，不推算缺失用量。主卡包括共享部分与独享包；归属无法确认的部分单独列出。</p></details></section>
   <footer id="updated"></footer></main><script>
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
-    const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月分布',width:0}};
+    const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:0}};
     const amount=value=>value==null?'—':value>=1024?(value/1024).toFixed(2)+' GB':value.toFixed(2)+' MB';
-    const totalFor=(report,key)=>report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
+    const totalFor=(report,key)=>report.period==='months'?report.average[key]:report.summary?report.summary[key]:report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
     const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
-    const status=d=>d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
+    const status=d=>current==='year'&&d.mb!=null?(d.key===report.month?'本月进行中':d.partial?'部分记录':'已结束'):d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
     let current='month', report=reports.month;
     function select(d){
       el('selected').textContent=d.key;el('selected-total').textContent=amount(d.mb);
       el('selected-main').textContent='主卡 '+amount(d.mainMB);el('selected-vice').textContent='副卡 '+amount(d.viceMB);
       el('selected-unknown').hidden=!(d.unknownMB>0);el('selected-unknown').textContent='未确认 '+amount(d.unknownMB);
       el('detail').textContent=d.first==null?'暂无成功采样记录':'有效区间 '+d.intervals+' 段\\n采样起止 '+clock(d.first,current==='year')+' — '+clock(d.last,current==='year');
-      el('selected-note').textContent=d.future?'该时段尚未到达':d.notes.join('；')||(d.mb==null?'没有记录，未补零':'仅代表已记录区间，不保证覆盖完整时段');
+      el('selected-note').textContent=(current==='year'&&d.key===report.month?'本月尚未结束，不参与月均。':current==='year'&&d.partial?'部分记录，不代表完整月用量。':'')+(d.future?'该时段尚未到达':d.notes.join('；')||(d.mb==null?'没有记录，未补零':'仅代表已记录区间，不保证覆盖完整时段'));
       Array.from(el('chart').children).forEach(item=>item.classList.toggle('selected',item.dataset.key===d.key));
       Array.from(el('rows').children).forEach(item=>item.classList.toggle('selected',item.dataset.key===d.key));
     }
     function render(key){
       current=key;report=reports[key];const mode=modes[key];
       Object.keys(modes).forEach(name=>{el('tab-'+name).classList.toggle('active',name===key);el('tab-'+name).setAttribute('aria-pressed',String(name===key));});
-      el('period-label').textContent=key==='year'?'最近12个月 · 含本月':report.month+(key==='hours'?' · 同日采样区间':' · 同日区间合计');
-      el('total').textContent=amount(report.totalMB);el('main-total').textContent=amount(totalFor(report,'mainMB'));el('vice-total').textContent=amount(totalFor(report,'viceMB'));
-      const unknown=totalFor(report,'unknownMB');el('unknown-total').hidden=!(unknown>0);el('unknown-total').textContent='归属未确认 '+amount(unknown);el('unknown-legend').hidden=!(unknown>0);
+      el('period-label').textContent=key==='year'?'已记录月均用量':report.month+(key==='hours'?' · 今日已记录用量':' · 本月已记录用量（含同月跨日）');
+      el('total').textContent=key==='year'?(report.average.monthCount?amount(report.average.mb):'积累中'):amount(report.totalMB);
+      el('main-label').textContent=key==='year'?'主卡月均':'主卡';el('vice-label').textContent=key==='year'?'副卡月均':'副卡';el('main-total').textContent=amount(totalFor(report,'mainMB'));el('vice-total').textContent=amount(totalFor(report,'viceMB'));
+      const unknown=totalFor(report,'unknownMB');el('unknown-total').hidden=!(unknown>0);el('unknown-total').textContent=(key==='year'?'未确认月均 ':'归属未确认 ')+amount(unknown);el('unknown-legend').hidden=!report.days.some(d=>d.unknownMB>0);
       const recorded=report.days.filter(d=>d.mb!=null).length;
-      el('coverage').textContent='已记录 '+recorded+' / '+report.days.length+' 个'+mode.label+' · '+(key==='year'?'包含同月跨日区间':'跨日区间单独列出');
+      el('coverage').textContent=key==='year'?(report.average.monthCount?'按 '+report.average.monthCount+' 个已结束月份计算 · 不含本月与无数据月'+(report.average.partialMonthCount?'（含 '+report.average.partialMonthCount+' 个部分记录月）':''):'暂无已结束且有记录的月份；本月尚在积累'):'已记录 '+recorded+' / '+report.days.length+' 个'+mode.label+' · '+(key==='month'?'包含同月跨日区间':'跨日区间单独列出');
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
       const max=Math.max(1,...report.days.map(d=>d.mb||0));
@@ -591,14 +609,17 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
         const row=document.createElement('tr');row.dataset.key=d.key;const date=document.createElement('td');const dateButton=document.createElement('button');dateButton.className='date';dateButton.textContent=key==='year'?d.key:key==='hours'?d.day+':00':d.key.slice(5);dateButton.onclick=()=>select(d);date.append(dateButton);row.append(date);
         for(const [value,className] of [[d.mainMB,'main'],[d.viceMB,'vice'],[d.unknownMB,''],[d.mb,'']]){const cell=document.createElement('td');cell.textContent=amount(value);cell.className=className;row.append(cell);}const state=document.createElement('td');state.textContent=status(d);row.append(state);el('rows').append(row);
       }
-      el('cross-hint').hidden=key==='year'||!report.crossDay.length;el('cross-hint').textContent='另有跨日待分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段，未计入上方合计';
+      el('cross-hint').hidden=key==='year'||!report.crossDay.length;el('cross-hint').textContent=(key==='month'?'其中跨日未分配 ':'另有跨日待分配 ')+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段，'+(key==='month'?'已计入本月合计':'未计入上方合计');
       el('chart-foot').textContent=key==='year'?'点击月份查看明细；灰色为无数据占位':key==='hours'?'点击时段查看明细；跨小时增量计入结束小时，不平均摊分':'左右滑动查看整月，点击日期查看明细；短柱不代表固定用量';
+      el('cross-description').textContent=key==='month'?'这部分已计入本月合计，无法准确拆到每天，因此未计入每日柱状图。':'这部分无法准确拆到小时，未计入今日小时合计。';
       el('cross-card').hidden=key==='year'||!report.crossDay.length;el('cross-summary').textContent='跨日未分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段';el('cross-events').replaceChildren();
       for(const interval of report.crossDay){const item=document.createElement('div');item.className='cross-event';item.textContent=clock(interval.from,true)+' → '+clock(interval.at,true)+'\\n合计 '+amount(interval.mb)+' · 主 '+amount(interval.mainMB)+' / 副 '+amount(interval.viceMB)+' / 未确认 '+amount(interval.unknownMB);el('cross-events').append(item);}
-      el('scope').textContent=key==='year'?'月汇总包含同月跨日区间，但不补算跨月缺口。只保存已有采样记录，无法自动补齐过去12个月账单。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'每日用量仅汇总同日有效区间，无法拆分的跨日区间单列；所以每日合计可能低于月度汇总。';
+      el('scope').textContent=key==='year'?'每根柱子表示一个月已记录的用量，不累计跨月总量。月均只对已结束且有记录的月份计算，不含本月与空白月份；部分记录月份会标注并计入已记录月均，不能当作完整账单月均。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'顶部为本月已记录用量，包含同日和可确认的同月跨日区间，与趋势图的本月柱一致。每日图不拆分跨日区间，因此每日柱子的合计可能低于本月顶部合计。';
       el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
       select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
     }
+    // 禁止双击缩放，但不拦截 touchmove，保留图表和表格的正常滚动。
+    document.addEventListener('dblclick',event=>event.preventDefault(),{passive:false});
     Object.keys(modes).forEach(key=>el('tab-'+key).onclick=()=>render(key));render(Object.hasOwn(modes,initial)?initial:'month');
   })();</script></body></html>`;
 }

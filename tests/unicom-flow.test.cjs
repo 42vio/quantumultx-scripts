@@ -232,7 +232,7 @@ function distributionFixture() {
   assert.equal(JSON.stringify(equalTime.months),originalMonthly);
   const cross=updateHistory(monthHistory,sample(midnight,20));
   monthReport=api.monthlyReport(cross,midnight);
-  assert.equal(monthReport.totalMB,10);assert.equal(monthReport.days[3].mb,null);
+  assert.equal(monthReport.totalMB,40);assert.equal(monthReport.dayTotalMB,10);assert.equal(monthReport.days[3].mb,null);
   assert.equal(monthReport.unallocatedMB,30);assert.equal(monthReport.crossDay.length,1);
   assert.ok(monthReport.days[2].notes.includes('跨日区间未分配'));
   assert.ok(monthReport.days[3].notes.includes('跨日区间未分配'));
@@ -240,9 +240,9 @@ function distributionFixture() {
   assert.equal(api.monthlyReport(zero,midnight).days[3].mb,0);
   const rollback=updateHistory(zero,sample(midnight+7200000,1));
   monthReport=api.monthlyReport(rollback,midnight);
-  assert.equal(monthReport.totalMB,10);assert.ok(monthReport.days[3].notes.some(n=>n.includes('回退')));
+  assert.equal(monthReport.totalMB,40);assert.ok(monthReport.days[3].notes.some(n=>n.includes('回退')));
   const changed=updateHistory(zero,sample(midnight+7200000,22,1024));
-  assert.equal(api.monthlyReport(changed,midnight).totalMB,10);
+  assert.equal(api.monthlyReport(changed,midnight).totalMB,40);
   const legacy={...monthHistory};delete legacy.months;delete legacy.cardHistoryVersion;
   const imported=updateHistory(legacy,sample(at+7200000,7));
   assert.equal(api.monthlyReport(imported,at).totalMB,null);
@@ -250,7 +250,7 @@ function distributionFixture() {
   const separated=updateHistory(monthHistory,{...sample(at+7200000,7),session:'new-user'});
   assert.equal(api.monthlyReport(separated,at).totalMB,null);
   const afterSevenDays=updateHistory(monthHistory,sample(at+10*86400000,100));
-  assert.equal(afterSevenDays.events.length,0);assert.equal(api.monthlyReport(afterSevenDays,at+10*86400000).totalMB,10);
+  assert.equal(afterSevenDays.events.length,0);assert.equal(api.monthlyReport(afterSevenDays,at+10*86400000).totalMB,200);
   const december=updateHistory(monthHistory,sample(nextMonth,0));
   assert.ok(december.months['2026-11']);assert.ok(december.months['2026-12']);
   assert.equal(api.monthlyReport(december,nextMonth).totalMB,null);
@@ -266,15 +266,34 @@ function distributionFixture() {
   const yearCards=api.yearlyReport(cardCross,midnight);
   assert.equal(yearCards.days.length,12);assert.equal(yearCards.days[0].key,'2025-12');assert.equal(yearCards.days[11].key,'2026-11');
   assert.equal(yearCards.days[11].mainMB,80);assert.equal(yearCards.days[11].viceMB,40);
-  assert.equal(yearCards.days[11].mb,120);assert.equal(yearCards.totalMB,120); // 90 同日 + 30 同月跨日，只计一次
+  assert.equal(yearCards.days[11].mb,120);assert.equal(yearCards.average.monthCount,0);assert.equal(yearCards.average.mb,null); // 90 同日 + 30 同月跨日，只计一次
   assert.equal(yearCards.days[0].mb,null);
   const zeroYear=api.yearlyReport(updateHistory(updateHistory(null,sample(at)),sample(at+3600000)),at);
-  assert.equal(zeroYear.days[11].mb,0);assert.equal(zeroYear.totalMB,0);
+  assert.equal(zeroYear.days[11].mb,0);assert.equal(zeroYear.average.mb,null);
   const nextNovember=new Date(2027,10,1,12).getTime();
   const boundaryHistory=updateHistory(januaryHistory,sample(nextNovember));
   assert.equal(boundaryHistory.months['2026-11'],undefined);assert.ok(boundaryHistory.months['2026-12']);
   const yearBoundary=api.yearlyReport(boundaryHistory,nextNovember);
   assert.equal(yearBoundary.days[0].key,'2026-12');assert.equal(yearBoundary.days[11].key,'2027-11');
+
+  // 月均排除本月和无记录月份，真实零用量的已结束月份仍参与计算。
+  const dailyUsage=(key,mainMB,viceMB,notes=[])=>({mb:mainMB+viceMB,mainMB,viceMB,unknownMB:0,intervals:1,
+    first:new Date(key+'T00:00:00').getTime(),last:new Date(key+'T23:59:00').getTime(),notes});
+  const averageHistory={...cardCross,months:{...cardCross.months,
+    '2026-10':{days:{'2026-10-01':dailyUsage('2026-10-01',100,50),'2026-10-31':dailyUsage('2026-10-31',100,50)},crossDay:[]},
+    '2026-09':{days:{'2026-09-03':dailyUsage('2026-09-03',0,0,['首次记录，仅建立基线'])},crossDay:[]},
+    '2026-08':{days:{},crossDay:[]}}};
+  const averageReport=api.yearlyReport(averageHistory,midnight);
+  assert.equal(averageReport.average.monthCount,2);assert.equal(averageReport.average.mb,150);
+  assert.equal(averageReport.average.mainMB,100);assert.equal(averageReport.average.viceMB,50);
+  assert.equal(averageReport.average.partialMonthCount,1);
+  assert.equal(averageReport.days.find(d=>d.key==='2026-10').partial,false);
+  assert.equal(averageReport.days.find(d=>d.key==='2026-09').partial,true);
+  assert.equal(averageReport.days[11].mb,120);assert.equal('totalMB' in averageReport,false);
+  const matchingMonth=api.monthlyReport(cardCross,midnight);
+  assert.equal(matchingMonth.totalMB,yearCards.days[11].mb);
+  assert.equal(matchingMonth.summary.mainMB,80);assert.equal(matchingMonth.summary.viceMB,40);
+  assert.equal(matchingMonth.dayTotalMB,90);assert.equal(matchingMonth.unallocatedMB,30);
 
   // 小时统计保留真实区间归属，未来事件不进入当前时段合计。
   const cardHours=api.hourlyReport(cardNext,at+2*3600000);
@@ -291,10 +310,14 @@ function distributionFixture() {
     append(...items){this.children.push(...items);}replaceChildren(...items){this.children=[...items];}
     setAttribute(key,value){this.attributes[key]=value;}
   }
-  const elements=new Map();const doc={getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element()};
+  const elements=new Map(),listeners=new Map();const doc={addEventListener:(type,handler)=>listeners.set(type,handler),getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element()};
   const html=api.statisticsHTML(api.statisticsReports(zero,midnight+3600000),true);
   new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
+  assert.ok(html.includes('user-scalable=no'));assert.ok(html.includes('touch-action:manipulation'));assert.ok(html.includes('calc(64px + env(safe-area-inset-top,0px))'));
+  assert.ok(html.includes('>今日</button>'));assert.ok(html.includes('>月度趋势</button>'));
+  let prevented=false;listeners.get('dblclick')({preventDefault:()=>{prevented=true;}});assert.equal(prevented,true);
+
   const monthBars=elements.get('chart').children;
   assert.equal(monthBars[0].children[0].style.height,'4px');assert.ok(monthBars[0].children[0].className.includes('missing'));
   assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
@@ -315,6 +338,7 @@ function distributionFixture() {
   assert.equal(JSON.stringify(cardCross),beforeReports); // 只读视图不改写历史
 
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入本月合计'));
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
@@ -322,11 +346,20 @@ function distributionFixture() {
   const dailyRow=elements.get('rows').children[2].children;
   assert.equal(dailyRow.length,6);assert.equal(dailyRow[1].textContent,'60.00 MB');assert.equal(dailyRow[2].textContent,'30.00 MB');assert.equal(dailyRow[4].textContent,'90.00 MB');
   elements.get('tab-year').onclick();assert.equal(elements.get('rows').children[11].children[1].textContent,'80.00 MB');assert.equal(elements.get('rows').children[11].children[2].textContent,'40.00 MB');
+  assert.equal(elements.get('total').textContent,'积累中');assert.equal(elements.get('main-total').textContent,'—');assert.equal(elements.get('main-label').textContent,'主卡月均');
   const yearSegments=elements.get('chart').children[11].children[0].children;
   assert.equal(yearSegments.length,2);assert.equal(yearSegments[0].style.background,'#0A94FF');
   elements.get('chart').children[0].onclick();assert.equal(elements.get('selected-main').textContent,'主卡 —');
+  elements.clear();
+  const averagedReports=api.statisticsReports(averageHistory,midnight);
+  const averageHTML=api.statisticsHTML(averagedReports,false,'year');
+  new vm.Script(averageHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('total').textContent,'150.00 MB');assert.equal(elements.get('main-total').textContent,'100.00 MB');assert.equal(elements.get('vice-total').textContent,'50.00 MB');
+  assert.ok(elements.get('coverage').textContent.includes('2 个已结束月份'));assert.ok(elements.get('coverage').textContent.includes('1 个部分记录月'));
+  assert.equal(elements.get('rows').children[11].children[5].textContent,'本月进行中');
+  assert.equal(elements.get('rows').children[9].children[5].textContent,'部分记录');
   const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
-  fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',api.statisticsHTML(reports,false,'year'));
+  fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',averageHTML);
   api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports));api.applyTheme({theme:'黑色'});
   fs.writeFileSync(monthlyOutput+'/hourly.html',api.statisticsHTML(api.statisticsReports(cardNext,at+2*3600000),false,'hours'));
 
@@ -641,5 +674,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/年度汇总/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

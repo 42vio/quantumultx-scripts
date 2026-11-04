@@ -122,7 +122,7 @@ function displayMetrics(data, mode = '统一显示') {
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
-    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '主卡+副卡', rightLabel: '主卡独享', omitted };
+    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '共享流量', rightLabel: '主卡独享', omitted };
   }
   return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false };
 }
@@ -506,36 +506,101 @@ function yearlyReport(history, at = Date.now()) {
     crossDay: [], unallocatedMB: 0, lastSuccess: history.data.at };
 }
 
-function monthlyHTML(report, stale = false) {
-  // 数据仅有日期、区间与用量；不把账号号码、原始响应或 Cookie 传入页面。
-  const payload = JSON.stringify(report).replace(/</g, '\\u003c');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    :root{color-scheme:${UF.bg === 'FFFFFF' ? 'light' : 'dark'}}*{box-sizing:border-box}body{margin:0;padding:24px 18px;background:#${UF.bg};color:#${UF.text};font:15px -apple-system,sans-serif}
-    h1{font-size:25px;margin:0 0 8px}h2{font-size:18px}.muted{color:#${UF.muted};line-height:1.7}strong{font-size:27px;font-weight:500}.panel{padding:18px 0;border-bottom:1px solid #${UF.track}}
-    .scroll{overflow-x:auto;max-width:100%}.chart{display:flex;align-items:stretch;gap:4px;min-width:${report.period === 'months' ? 0 : 620}px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple};display:flex;flex-direction:column-reverse;overflow:hidden}.segment{display:block;width:100%}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
-    table{width:100%;min-width:600px;border-collapse:collapse}td{white-space:nowrap}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
-    </style></head><body><h1 id="title">本月用量</h1><div class="muted">采样估算 · 非运营商日账单${stale ? ' · 当前为缓存' : ''}</div>
-    <section class="panel"><div class="muted">${report.period === 'months' ? '已记录的月用量（含同月跨日区间）' : '已记录的同日区间用量'}</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
-    <section class="panel"><div class="muted">点击柱子或${report.period === 'months' ? '月份' : '日期'}查看明细；宽表可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">蓝：主卡；紫：副卡；黄：归属未确认。灰色短柱：无数据；零值为紫色短柱，均以数值为准。</p></section>
-    <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><div class="scroll"><table><thead><tr><th>${report.period === 'months' ? '月份' : '日期'}</th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div>
-    <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；月度汇总可将同月跨日区间计入对应月份；跨月缺口不推算。跨月、套餐变化和计数回退时重新建立基线，已有记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
-    <p id="updated" class="muted"></p><script>
-    const report=${payload};
-    const annual=report.period==='months';
-    const byId=id=>document.getElementById(id);
-    const amount=mb=>mb==null?'—':mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(2)+' MB';
-    const clock=t=>t==null?'无':annual?new Date(t).toLocaleString('zh-CN',{hour12:false}):new Date(t).toLocaleTimeString('zh-CN',{hour12:false});
-    const state=d=>d.future?'未到日期':d.notes.length?'有缺口':d.mb!=null?'采样区间':d.first!=null?'仅基线':'无采样';
-    const select=d=>{byId('selected').textContent=d.key;byId('detail').textContent='区间估算：'+amount(d.mb)+'\\n主卡：'+amount(d.mainMB)+'　副卡：'+amount(d.viceMB)+'\\n归属未确认：'+amount(d.unknownMB)+'\\n有效区间：'+d.intervals+' 段\\n成功采样范围：'+clock(d.first)+' — '+clock(d.last)+'\\n'+(d.notes.join('；')||'仅代表已记录区间，未采样时段不补零');document.querySelectorAll('.bar').forEach(b=>b.classList.toggle('selected',b.dataset.key===d.key));};
-    byId('title').textContent=annual?'近12个月（含本月）':report.month+' 本月用量';byId('total').textContent=amount(report.totalMB);
-    byId('coverage').textContent=(annual?'有用量记录 ':'有同日区间记录 ')+report.days.filter(d=>d.mb!=null).length+(annual?' 个月；无数据月份未补零。':' 天；其余日期未补零。');
-    byId('unallocated').textContent=annual?'同月跨日区间已并入所属月份；跨月缺口未推算。':'跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
-    const max=Math.max(1,...report.days.map(d=>d.mb||0));
-    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*110))+'px';if(d.mb>0){fill.style.background='transparent';for(const [value,color] of [[d.mainMB,'#${UF.blue}'],[d.viceMB,'#${UF.purple}'],[d.unknownMB,'#${UF.warning}']]){if(value>0){const segment=document.createElement('span');segment.className='segment';segment.style.height=(value/d.mb*100)+'%';segment.style.background=color;fill.append(segment);}}}const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
-    const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=annual?d.key:d.key.slice(5);button.onclick=()=>select(d);date.append(button);const main=document.createElement('td');main.textContent=amount(d.mainMB);main.style.color='#${UF.blue}';const vice=document.createElement('td');vice.textContent=amount(d.viceMB);vice.style.color='#${UF.purple}';const unknown=document.createElement('td');unknown.textContent=amount(d.unknownMB);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,main,vice,unknown,value,status);byId('rows').append(tr);}
-    for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb)+'（主 '+amount(e.mainMB)+' / 副 '+amount(e.viceMB)+' / 未确认 '+amount(e.unknownMB)+'）';byId('cross').append(p);}
-    byId('updated').textContent='最后成功查询：'+new Date(report.lastSuccess).toLocaleString('zh-CN',{hour12:false});select(report.days.find(d=>d.key===report.today)||report.days[0]);
-    </script></body></html>`;
+function hourlyReport(history, at = Date.now()) {
+  const date = dayKey(at), hour = new Date(at).getHours();
+  const days = Array.from({ length: 24 }, (_, index) => {
+    const events = (history.events || []).filter(e => dayKey(e.from) === date && dayKey(e.at) === date && new Date(e.at).getHours() === index && e.at <= at);
+    const parts = events.reduce((sum, e) => { sum.mb += e.mb; for (const [key, value] of Object.entries(eventParts(e))) sum[key] += value; return sum; }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
+    const known = events.length > 0 && index <= hour;
+    return { key: `${date} ${String(index).padStart(2, '0')}:00`, day: String(index).padStart(2, '0'), future: index > hour,
+      mb: known ? parts.mb : null, mainMB: known ? parts.mainMB : null, viceMB: known ? parts.viceMB : null, unknownMB: known ? parts.unknownMB : null,
+      intervals: known ? events.length : 0, first: known ? Math.min(...events.map(e => e.from)) : null,
+      last: known ? Math.max(...events.map(e => e.at)) : null,
+      notes: events.some(e => new Date(e.from).getHours() !== index) ? ['跨小时区间计入结束小时，未平均摊分'] : [] };
+  });
+  const saved = history.months && history.months[date.slice(0, 7)];
+  const crossDay = (saved && saved.crossDay || []).filter(e => dayKey(e.from) <= date && dayKey(e.at) >= date);
+  return { period: 'hours', month: date, today: `${date} ${String(hour).padStart(2, '0')}:00`, days,
+    totalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
+    crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
+}
+
+function statisticsReports(history, at = Date.now()) {
+  return { hours: hourlyReport(history, at), month: monthlyReport(history, at), year: yearlyReport(history, at) };
+}
+
+function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
+  const payload = JSON.stringify(reports).replace(/</g, '\\u003c');
+  const light = parseInt(UF.bg.slice(0, 2), 16) * 0.299 + parseInt(UF.bg.slice(2, 4), 16) * 0.587 + parseInt(UF.bg.slice(4, 6), 16) * 0.114 > 150;
+  const surface = light ? 'FFFFFF' : '242426', page = light ? 'F3F5F9' : '151517';
+  const border = light ? 'E7EAF0' : '343438', soft = light ? 'F6F8FC' : '2D2D31';
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>
+  :root{color-scheme:${light ? 'light' : 'dark'};--text:#${UF.text};--muted:#${UF.muted};--blue:#${UF.blue};--purple:#${UF.purple};--warning:#${UF.warning};--line:#${border};--surface:#${surface};--soft:#${soft}}
+  *{box-sizing:border-box}body{margin:0;background:#${page};color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;-webkit-text-size-adjust:100%}button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
+  .shell{max-width:760px;margin:auto;padding:26px 18px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}h1{font-size:26px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
+  .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:20px}.tab{border:0;background:transparent;padding:10px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:22px 20px}.period-label{font-size:13px;color:var(--muted)}.total{margin:10px 0 12px;font-variant-numeric:tabular-nums;letter-spacing:-1.5px;font-size:42px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
+  h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--muted);margin:15px 0 8px}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
+  .scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.chart{display:flex;align-items:stretch;gap:5px;height:180px;padding:8px 3px 3px;background:repeating-linear-gradient(to top,transparent 0,transparent 41px,var(--line) 41px,var(--line) 42px);background-size:100% 144px;background-repeat:no-repeat}.bar{flex:1;min-width:14px;padding:0 1px;border:0;background:transparent;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;gap:9px}.bar.selected{background:#${UF.blue}12;box-shadow:inset 0 0 0 1px #${UF.blue}66}.fill{display:flex;flex-direction:column-reverse;overflow:hidden;width:100%;border-radius:4px 4px 1px 1px;background:var(--purple)}.fill.missing{background:#${UF.track}}.fill.future{background:transparent}.segment{display:block;width:100%;flex-shrink:0}.tick{height:14px;font-size:10px;color:var(--muted);white-space:nowrap}.bar.selected .tick{color:var(--blue)}.chart-foot{margin-top:10px;line-height:1.6;font-size:11px;color:var(--muted)}
+  .selected-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.selected-value{font-size:21px;font-weight:500;letter-spacing:-.4px}.selected-cards{display:flex;flex-wrap:wrap;gap:14px;margin:13px 0;font-size:13px}.detail{border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}.status-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--muted)}
+  .table-card{padding:18px 0 0;overflow:hidden}.table-card .card-head{padding:0 18px 14px}table{width:100%;min-width:545px;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:right;border-top:1px solid var(--line);padding:13px 12px;white-space:nowrap;font-size:12px}th{font-size:11px;font-weight:400;color:var(--muted);background:var(--soft)}th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:1;background:var(--surface);padding-left:18px}th:first-child{background:var(--soft)}td:last-child{color:var(--muted);font-size:11px}tr.selected td{background:#${soft}}.date{border:0;padding:3px 0;background:none;color:var(--text);font-size:12px}tr.selected .date{color:var(--blue)}
+  details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
+  </style></head><body><main class="shell">
+  <header><div><h1>用量统计</h1><div class="eyebrow">采样记录 · 非运营商账单</div></div><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></header>
+  <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">小时</button><button class="tab" id="tab-month" type="button">本月</button><button class="tab" id="tab-year" type="button">近12个月</button></nav>
+  <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i>主卡</div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i>副卡</div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
+  <section class="card"><div class="card-head"><h2 id="chart-title"></h2><span id="chart-count" class="hint"></span></div><div class="legend"><span><i class="dot blue"></i>主卡</span><span><i class="dot purple"></i>副卡</span><span id="unknown-legend"><i class="dot amber"></i>未确认</span><span><i class="dot gray"></i>无数据</span></div><div class="scroll"><div id="chart" class="chart"></div></div><div id="chart-foot" class="chart-foot"></div></section>
+  <section class="card"><div class="selected-heading"><h2 id="selected"></h2><span id="selected-total" class="selected-value"></span></div><div class="selected-cards"><span id="selected-main" class="main"></span><span id="selected-vice" class="vice"></span><span id="selected-unknown" class="unconfirmed"></span></div><div id="detail" class="detail"></div><p id="selected-note" class="status-note"></p></section>
+  <section class="card table-card"><div class="card-head"><h2>明细记录</h2><span class="hint">左右滑动查看全部</span></div><div class="scroll"><table><thead><tr><th id="date-heading"></th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+  <section class="card" id="cross-card"><details><summary id="cross-summary"></summary><p>这部分用量无法准确拆到某天或小时，未计入上方合计。</p><div id="cross-events"></div></details></section>
+  <section class="card"><details><summary>统计口径与数据缺口</summary><p id="scope"></p><p>只统计成功查询间可确认的增量。无数据不等于零；短柱只是占位，用量以数值为准。套餐变更、累计计数回退或跨月时重新建立基线，不推算缺失用量。主卡包括共享部分与独享包；归属无法确认的部分单独列出。</p></details></section>
+  <footer id="updated"></footer></main><script>
+  (()=>{
+    const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
+    const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月分布',width:0}};
+    const amount=value=>value==null?'—':value>=1024?(value/1024).toFixed(2)+' GB':value.toFixed(2)+' MB';
+    const totalFor=(report,key)=>report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
+    const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
+    const status=d=>d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
+    let current='month', report=reports.month;
+    function select(d){
+      el('selected').textContent=d.key;el('selected-total').textContent=amount(d.mb);
+      el('selected-main').textContent='主卡 '+amount(d.mainMB);el('selected-vice').textContent='副卡 '+amount(d.viceMB);
+      el('selected-unknown').hidden=!(d.unknownMB>0);el('selected-unknown').textContent='未确认 '+amount(d.unknownMB);
+      el('detail').textContent=d.first==null?'暂无成功采样记录':'有效区间 '+d.intervals+' 段\\n采样起止 '+clock(d.first,current==='year')+' — '+clock(d.last,current==='year');
+      el('selected-note').textContent=d.future?'该时段尚未到达':d.notes.join('；')||(d.mb==null?'没有记录，未补零':'仅代表已记录区间，不保证覆盖完整时段');
+      Array.from(el('chart').children).forEach(item=>item.classList.toggle('selected',item.dataset.key===d.key));
+      Array.from(el('rows').children).forEach(item=>item.classList.toggle('selected',item.dataset.key===d.key));
+    }
+    function render(key){
+      current=key;report=reports[key];const mode=modes[key];
+      Object.keys(modes).forEach(name=>{el('tab-'+name).classList.toggle('active',name===key);el('tab-'+name).setAttribute('aria-pressed',String(name===key));});
+      el('period-label').textContent=key==='year'?'最近12个月 · 含本月':report.month+(key==='hours'?' · 同日采样区间':' · 同日区间合计');
+      el('total').textContent=amount(report.totalMB);el('main-total').textContent=amount(totalFor(report,'mainMB'));el('vice-total').textContent=amount(totalFor(report,'viceMB'));
+      const unknown=totalFor(report,'unknownMB');el('unknown-total').hidden=!(unknown>0);el('unknown-total').textContent='归属未确认 '+amount(unknown);el('unknown-legend').hidden=!(unknown>0);
+      const recorded=report.days.filter(d=>d.mb!=null).length;
+      el('coverage').textContent='已记录 '+recorded+' / '+report.days.length+' 个'+mode.label+' · '+(key==='year'?'包含同月跨日区间':'跨日区间单独列出');
+      el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
+      el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
+      const max=Math.max(1,...report.days.map(d=>d.mb||0));
+      for(const d of report.days){
+        const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
+        const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*140))+'px';
+        if(d.mb>0){fill.style.background='transparent';for(const [value,color] of [[d.mainMB,'#${UF.blue}'],[d.viceMB,'#${UF.purple}'],[d.unknownMB,'#${UF.warning}']]){if(value>0){const segment=document.createElement('span');segment.className='segment';segment.style.background=color;segment.style.height=(value/d.mb*100)+'%';fill.append(segment);}}}
+        const tick=document.createElement('span');tick.className='tick';tick.textContent=d.day;button.append(fill,tick);button.onclick=()=>select(d);el('chart').append(button);
+        const row=document.createElement('tr');row.dataset.key=d.key;const date=document.createElement('td');const dateButton=document.createElement('button');dateButton.className='date';dateButton.textContent=key==='year'?d.key:key==='hours'?d.day+':00':d.key.slice(5);dateButton.onclick=()=>select(d);date.append(dateButton);row.append(date);
+        for(const [value,className] of [[d.mainMB,'main'],[d.viceMB,'vice'],[d.unknownMB,''],[d.mb,'']]){const cell=document.createElement('td');cell.textContent=amount(value);cell.className=className;row.append(cell);}const state=document.createElement('td');state.textContent=status(d);row.append(state);el('rows').append(row);
+      }
+      el('cross-hint').hidden=key==='year'||!report.crossDay.length;el('cross-hint').textContent='另有跨日待分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段，未计入上方合计';
+      el('chart-foot').textContent=key==='year'?'点击月份查看明细；灰色为无数据占位':key==='hours'?'点击时段查看明细；跨小时增量计入结束小时，不平均摊分':'左右滑动查看整月，点击日期查看明细；短柱不代表固定用量';
+      el('cross-card').hidden=key==='year'||!report.crossDay.length;el('cross-summary').textContent='跨日未分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段';el('cross-events').replaceChildren();
+      for(const interval of report.crossDay){const item=document.createElement('div');item.className='cross-event';item.textContent=clock(interval.from,true)+' → '+clock(interval.at,true)+'\\n合计 '+amount(interval.mb)+' · 主 '+amount(interval.mainMB)+' / 副 '+amount(interval.viceMB)+' / 未确认 '+amount(interval.unknownMB);el('cross-events').append(item);}
+      el('scope').textContent=key==='year'?'月汇总包含同月跨日区间，但不补算跨月缺口。只保存已有采样记录，无法自动补齐过去12个月账单。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'每日用量仅汇总同日有效区间，无法拆分的跨日区间单列；所以每日合计可能低于月度汇总。';
+      el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
+      select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
+    }
+    Object.keys(modes).forEach(key=>el('tab-'+key).onclick=()=>render(key));render(Object.hasOwn(modes,initial)?initial:'month');
+  })();</script></body></html>`;
 }
 
 function updateHistory(previous, sample) {
@@ -704,11 +769,13 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
       if (c.main > 0) roundedRect(ctx, x, barY + barH - mainHeight, barW, mainHeight, 2.5, UF.blue);
       if (c.vice > 0) roundedRect(ctx, x, barY + barH - mainHeight - viceHeight, barW, viceHeight, 2.5, UF.purple);
     }
-    const half = width / 2;
-    roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
-    roundedRect(ctx, x + half, y + 63, 2.5, 2.5, 1.25, UF.purple);
-    text(ctx, `主 ${formatMB(c.main)}`, x + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
-    text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
+    if (!(c.complete && c.main === 0)) {
+      const half = width / 2;
+      roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
+      roundedRect(ctx, x + half, y + 63, 2.5, 2.5, 1.25, UF.purple);
+      text(ctx, `主 ${formatMB(c.main)}`, x + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
+      text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
+    }
   } else if (metric && metric.total > 0) {
     const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
     roundedRect(ctx, x, barY + barH * (1 - ratio), barW, barH * ratio, 2.5, UF.blue);
@@ -735,7 +802,7 @@ function renderImage(result, medium, width, height) {
     const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
-    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '区间用量 · 蓝主 / 紫副 / 黄未分' : result.history.note,
+    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
       chartX, 90, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
@@ -773,9 +840,14 @@ function renderImage(result, medium, width, height) {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
+  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - (medium ? 104 : 4), 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
+    const legendY = height - 18, legendX = width - pad - 90;
+    [[UF.blue, '主卡'], [UF.purple, '副卡'], [UF.warning, '未分']].forEach(([color, label], index) => {
+      roundedRect(ctx, legendX + index * 31, legendY + 3, 2.5, 2.5, 1.25, color);
+      text(ctx, label, legendX + index * 31 + 5, legendY, 16, 9, 6.5, UF.muted);
+    });
     // 使用文字颜色绘制图标，点击区域另由透明布局提供。
     text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);
   }
@@ -976,19 +1048,11 @@ function createWidgetClass(DmYY) {
         + '\n\n仅统计接口明确归属这张卡的用量，缺失项显示 --，不代表整张卡的全部用量。');
     }
 
-    async showMonthlyUsage() {
+    async showUsageStatistics() {
       await this.loadResult();
-      if (!this.result) return alertMessage('本月用量', this.failure || '请先成功查询一次套餐');
+      if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
       const view = new WebView();
-      await view.loadHTML(monthlyHTML(monthlyReport(this.result.history), this.result.stale));
-      await view.present();
-    }
-
-    async showYearlyUsage() {
-      await this.loadResult();
-      if (!this.result) return alertMessage('近12个月', this.failure || '请先成功查询一次套餐');
-      const view = new WebView();
-      await view.loadHTML(monthlyHTML(yearlyReport(this.result.history), this.result.stale));
+      await view.loadHTML(statisticsHTML(statisticsReports(this.result.history), this.result.stale));
       await view.present();
     }
 
@@ -1059,8 +1123,7 @@ function createWidgetClass(DmYY) {
       this.registerAction({ title: '账户与数据', menu: [
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
-        action('flowMonthly', '本月用量', 'chart.bar.xaxis', '#8A73FF', () => this.showMonthlyUsage()),
-        action('flowYearly', '近12个月', 'calendar', '#007AFF', () => this.showYearlyUsage()),
+        action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
         action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
         action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
         action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),

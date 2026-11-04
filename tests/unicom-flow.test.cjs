@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {yearlyReport, cardDelta, monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -33,7 +33,7 @@ function distributionFixture() {
   assert.equal(splitCards.left.total,null); assert.ok(splitCards.left.detail.includes('独享'));
   const c=api.displayMetrics(cards).left.composition;
   assert.equal(c.complete,true);assert.equal(c.main,1.22*1024);assert.equal(c.vice,2*1024);
-  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'主卡+副卡');
+  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'共享流量');
   const compositionRows = [{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:12}];
   const composition = (members, used=12) => api.sharedComposition([{used,members}]);
   assert.equal(composition(compositionRows).complete,true); // 主卡为零，整条紫色
@@ -126,7 +126,7 @@ function distributionFixture() {
   assert.equal(distribution.categories.general.total,200*1024);
   assert.ok(Math.abs(distribution.categories.general.used/1024-12.03)<1e-9);
   const split=api.displayMetrics(distribution);
-  assert.equal(split.leftLabel,'主卡+副卡'); assert.equal(split.rightLabel,'主卡独享');
+  assert.equal(split.leftLabel,'共享流量'); assert.equal(split.rightLabel,'主卡独享');
   assert.equal(split.left.total,120*1024); assert.equal(split.right.total,80*1024);
   assert.equal(formatMB(split.left.used),'3.22GB'); assert.equal(formatMB(split.right.used),'8.81GB');
   const insideResources=distributionFixture(); insideResources.resources[0].details.push(insideResources.unshared[0].details[0]);delete insideResources.unshared;
@@ -276,57 +276,59 @@ function distributionFixture() {
   const yearBoundary=api.yearlyReport(boundaryHistory,nextNovember);
   assert.equal(yearBoundary.days[0].key,'2026-12');assert.equal(yearBoundary.days[11].key,'2027-11');
 
-  // 执行月度页实际脚本，确认日期点击、零值、缺失值和明细渲染。
+  // 小时统计保留真实区间归属，未来事件不进入当前时段合计。
+  const cardHours=api.hourlyReport(cardNext,at+2*3600000);
+  assert.equal(cardHours.days.length,24);assert.equal(cardHours.days[11].mainMB,60);assert.equal(cardHours.days[11].viceMB,30);
+  assert.equal(cardHours.totalMB,90);assert.ok(cardHours.days[11].notes[0].includes('结束小时'));
+  assert.equal(cardHours.days[14].future,true);assert.equal(cardHours.days[10].mb,null);
+  const futureHour={...cardNext,events:[...cardNext.events,{from:at+3*3600000,at:at+4*3600000,mb:100,mainMB:100,viceMB:0,unknownMB:0}]};
+  assert.equal(api.hourlyReport(futureHour,at+2*3600000).totalMB,90);
+  assert.equal(api.hourlyReport(cardCross,midnight).totalMB,null);assert.equal(api.hourlyReport(cardCross,midnight).unallocatedMB,30);
+
+  // 执行完整统计页脚本，验证同页切换、逐卡表格、缺失占位及图表选择。
   class Element {
-    constructor(){this.children=[];this.dataset={};this.style={};this.classList={toggle:()=>{}};}
-    append(...items){this.children.push(...items);}setAttribute(){}
+    constructor(){this.children=[];this.dataset={};this.style={};this.attributes={};this.classes=new Set();this.classList={toggle:(key,value)=>value?this.classes.add(key):this.classes.delete(key)};}
+    append(...items){this.children.push(...items);}replaceChildren(...items){this.children=[...items];}
+    setAttribute(key,value){this.attributes[key]=value;}
   }
-  const elements=new Map();const doc={getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element(),querySelectorAll:()=>elements.get('chart').children};
-  const html=api.monthlyHTML(api.monthlyReport(zero,midnight),true);
-  const pageCode=html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  new vm.Script(pageCode).runInNewContext({document:doc});
+  const elements=new Map();const doc={getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element()};
+  const html=api.statisticsHTML(api.statisticsReports(zero,midnight+3600000),true);
+  new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
   const monthBars=elements.get('chart').children;
   assert.equal(monthBars[0].children[0].style.height,'4px');assert.ok(monthBars[0].children[0].className.includes('missing'));
   assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
   assert.equal(monthBars[4].children[0].style.height,'0px');assert.ok(monthBars[4].children[0].className.includes('future'));
-
-  assert.equal(elements.get('selected').textContent,'2026-11-04');
-  assert.ok(elements.get('detail').textContent.includes('0.00 MB'));
-  elements.get('chart').children[1].onclick();
-  assert.equal(elements.get('selected').textContent,'2026-11-02');assert.ok(elements.get('detail').textContent.includes('—'));
-  elements.get('rows').children[2].children[0].children[0].onclick();
-  assert.equal(elements.get('selected').textContent,'2026-11-03');
-  const malicious=api.monthlyHTML({...monthReport,today:'</script><img src=x>'});
-  assert.equal((malicious.match(/<\/script>/g)||[]).length,1);
-  assert.ok(!html.includes('13000000001'));
-  api.applyTheme({theme:'白色'});assert.ok(api.monthlyHTML(monthReport).includes('color-scheme:light'));
-  api.applyTheme({theme:'黑色'});
-
+  assert.equal(elements.get('selected').textContent,'2026-11-04');assert.equal(elements.get('selected-total').textContent,'0.00 MB');
+  elements.get('chart').children[1].onclick();assert.equal(elements.get('selected').textContent,'2026-11-02');assert.equal(elements.get('selected-total').textContent,'—');
+  elements.get('rows').children[2].children[0].children[0].onclick();assert.equal(elements.get('selected').textContent,'2026-11-03');
+  elements.get('tab-hours').onclick();assert.equal(elements.get('chart').children.length,24);assert.equal(elements.get('rows').children.length,24);
+  assert.equal(elements.get('tab-hours').attributes['aria-pressed'],'true');assert.equal(elements.get('tab-month').attributes['aria-pressed'],'false');
+  elements.get('tab-year').onclick();assert.equal(elements.get('chart').children.length,12);assert.equal(elements.get('rows').children.length,12);assert.equal(elements.get('chart').style.minWidth,'0px');
+  elements.get('tab-month').onclick();assert.equal(elements.get('chart').children.length,30); // 未重复追加旧节点
+  const malicious=api.statisticsHTML({month:{...monthReport,today:'</script><img src=x>'}});
+  assert.equal((malicious.match(/<\/script>/g)||[]).length,1);assert.ok(!html.includes('13000000001'));assert.ok(html.includes('缓存数据'));assert.ok(html.includes('<meta charset="utf-8">'));
+  api.applyTheme({theme:'白色'});assert.ok(api.statisticsHTML(api.statisticsReports(zero,midnight)).includes('color-scheme:light'));api.applyTheme({theme:'黑色'});
   elements.clear();
-  const cardsHTML=api.monthlyHTML(api.monthlyReport(cardCross,midnight));
+  const beforeReports=JSON.stringify(cardCross);
+  const reports=api.statisticsReports(cardCross,midnight), cardsHTML=api.statisticsHTML(reports);
+  assert.equal(JSON.stringify(cardCross),beforeReports); // 只读视图不改写历史
+
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
-  elements.get('chart').children[2].onclick();assert.ok(elements.get('detail').textContent.includes('主卡：60.00 MB'));assert.ok(elements.get('detail').textContent.includes('副卡：30.00 MB'));
-
+  elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-main').textContent,'主卡 60.00 MB');assert.equal(elements.get('selected-vice').textContent,'副卡 30.00 MB');
   const dailyRow=elements.get('rows').children[2].children;
   assert.equal(dailyRow.length,6);assert.equal(dailyRow[1].textContent,'60.00 MB');assert.equal(dailyRow[2].textContent,'30.00 MB');assert.equal(dailyRow[4].textContent,'90.00 MB');
-  elements.clear();
-  const yearHTML=api.monthlyHTML(yearCards);
-  assert.ok(yearHTML.includes('<meta charset="utf-8">'));assert.ok(yearHTML.includes('min-width:0px'));
-
-  new vm.Script(yearHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('chart').children.length,12);assert.equal(elements.get('rows').children.length,12);
-  assert.equal(elements.get('title').textContent,'近12个月（含本月）');
-  assert.equal(elements.get('rows').children[11].children[1].textContent,'80.00 MB');
-  assert.equal(elements.get('rows').children[11].children[2].textContent,'40.00 MB');
+  elements.get('tab-year').onclick();assert.equal(elements.get('rows').children[11].children[1].textContent,'80.00 MB');assert.equal(elements.get('rows').children[11].children[2].textContent,'40.00 MB');
   const yearSegments=elements.get('chart').children[11].children[0].children;
   assert.equal(yearSegments.length,2);assert.equal(yearSegments[0].style.background,'#0A94FF');
-  elements.get('chart').children[0].onclick();assert.ok(elements.get('detail').textContent.includes('主卡：—'));
-
-  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',yearHTML);
+  elements.get('chart').children[0].onclick();assert.equal(elements.get('selected-main').textContent,'主卡 —');
+  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
+  fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',api.statisticsHTML(reports,false,'year'));
+  api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports));api.applyTheme({theme:'黑色'});
+  fs.writeFileSync(monthlyOutput+'/hourly.html',api.statisticsHTML(api.statisticsReports(cardNext,at+2*3600000),false,'hours'));
 
   // 真正的原生绘图代码在 mock 中执行，将相同绘图指令输出为 SVG 供视觉检查。
   const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -379,9 +381,18 @@ function distributionFixture() {
     for(const bar of bars) { assert.ok(Number(bar[1])>=34-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=71+1e-8); }
   }
 
-  const viceOnlyData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};
+  const viceOnlyData={...previewData,at:visualAt,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};
   const viceOnly=visual.renderImage({history:{...history,data:viceOnlyData},stale:false},true,338,158);
   assert.ok(/x="13" y="[0-9.]+" width="5" height="[0-9.]+" rx="2.5" ry="[0-9.]+" fill="#8A73FF"/.test(viceOnly));
+  fs.writeFileSync(output+'/small-zero.svg',visual.renderImage({history:{...history,data:viceOnlyData},stale:false},false,158,158));
+  fs.writeFileSync(output+'/medium-zero.svg',viceOnly);
+  assert.ok(!viceOnly.includes('NaN'));assert.ok(!viceOnly.includes('主 0.0MB'));assert.ok(!viceOnly.includes('副 3.22GB'));
+  const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
+  assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
+  assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
+  const footerLegend=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>主卡<\/text>/);
+  const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>更新 [^<]+<\/text>/);
+  assert.ok(footerLegend);assert.ok(footerTime);assert.equal(footerLegend[1],footerTime[1]);
   const step=(338-26)/24;
   for(const hour of [0,6,12,18,23]) {
     const expected=13+(hour+0.5)*step;
@@ -546,24 +557,12 @@ function distributionFixture() {
   assert.ok(menus.some(item=>item.title==='组件主题' && item.options.join(',')==='黑色,白色'));
   assert.ok(menus.some(item=>item.title==='显示方式' && item.options.join(',')==='统一显示,主副卡分开显示'));
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
-  assert.ok(menus.some(item=>item.title==='本月用量'));
-  assert.ok(menus.some(item=>item.title==='近12个月'));
-  await instance.showYearlyUsage();assert.ok(feedback.at(-1).html.includes('近12个月（含本月）'));
-  apiError=true;await instance.showYearlyUsage();assert.ok(feedback.at(-1).html.includes('当前为缓存'));apiError=false;
+  assert.ok(menus.some(item=>item.title==='用量统计'));
+  assert.ok(!menus.some(item=>['本月用量','近12个月'].includes(item.title)));
+  const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics+2);
+  assert.ok(feedback.at(-1).html.includes('tab-hours'));assert.ok(feedback.at(-1).html.includes('tab-year'));
+  apiError=true;await instance.showUsageStatistics();assert.ok(feedback.at(-1).html.includes('缓存数据'));apiError=false;
 
-  const queriesBeforeMonthly=requestCount;
-  await instance.showMonthlyUsage();
-  assert.equal(requestCount,queriesBeforeMonthly+2);
-  assert.ok(feedback.at(-1).html.includes('本月用量'));
-  apiError=true;await instance.showMonthlyUsage();
-  assert.ok(feedback.at(-1).html.includes('当前为缓存'));
-  apiError=false;
-
-  assert.ok(menus.some(item=>item.title==='账户设置'));
-  assert.ok(menus.some(item=>item.title==='代理缓存'));
-  assert.ok(menus.some(item=>item.title==='颜色配置'));
-  assert.ok(menus.some(item=>item.title==='重载组件'));
-  assert.ok(menus.some(item=>item.title==='脚本更新'));
   const configPage=await instance.renderAppView(instance._menuActions);
   assert.equal(configPage.avatar,false);
   const historyFile='/documents/UnicomFlow/history.json';
@@ -642,5 +641,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/年度汇总/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/年度汇总/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

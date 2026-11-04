@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, createWidgetClass, validateUpdateSource, newerVersion, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -29,9 +29,20 @@ function distributionFixture() {
   const cards=parsePackages(cardFixture);
   const splitCards=api.displayMetrics(cards,'主副卡分开显示');
   assert.equal(splitCards.leftLabel,'主卡·0001'); assert.equal(splitCards.rightLabel,'副卡·0002');
-  assert.equal(splitCards.left.used,1.22*1024); assert.equal(splitCards.right.used,2*1024);
-  assert.equal(splitCards.left.total,null); assert.equal(splitCards.left.detail,'已返回明细合计');
+  assert.equal(splitCards.left.used,(1.22+8.81)*1024); assert.equal(splitCards.right.used,2*1024);
+  assert.equal(splitCards.left.total,null); assert.ok(splitCards.left.detail.includes('独享'));
+  const c=api.displayMetrics(cards).left.composition;
+  assert.equal(c.complete,true);assert.equal(c.main,1.22*1024);assert.equal(c.vice,2*1024);
   assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'主卡+副卡');
+  const compositionRows = [{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:12}];
+  const composition = (members, used=12) => api.sharedComposition([{used,members}]);
+  assert.equal(composition(compositionRows).complete,true); // 主卡为零，整条紫色
+  assert.equal(composition(compositionRows.slice(1)).complete,false); // 不用减法补主卡
+  assert.equal(composition(compositionRows,13).complete,false); // 不一致时不分色
+  assert.equal(composition(compositionRows.map(row=>({...row,used:0})),0).complete,true);
+  assert.equal(composition([...compositionRows,compositionRows[1]]).vice,12); // 同成员去重
+  assert.equal(composition([...compositionRows,{...compositionRows[1],used:13}]).vice,null);
+
   const variant=distributionFixture();variant.viceCardList=[{number:'13000000001',role:'main'}];
   variant.shareData={details:[{feePolicyId:'main',feePolicyName:'5G畅爽冰激凌199元（首月全量全价）（上月结转限本月使用）',elemType:'3',viceCardList:[{number:'13000000001',use:20}]}]};
   const variantData=parsePackages(variant);assert.equal(variantData.members[0].records[0].used,20);
@@ -44,7 +55,7 @@ function distributionFixture() {
 
   assert.equal(cards.members.length,2); assert.equal(cards.members[0].role,'主卡'); assert.equal(cards.members[1].role,'副卡');
   assert.equal(cards.members[1].current,true); assert.equal(cards.members[1].records[0].used,2048);
-  assert.equal(cards.members[0].records.length,1); // 非共享包没有归属数据，不推算到主卡
+  assert.equal(cards.members[0].records.length,1); // 原始成员明细仍只记录共享部分；展示时另加用户确认的主卡独享包
   assert.equal(cards.packages[0].used,3.22*1024); // 共享总量保持不变
   assert.equal(cards.members[0].phone,'130****0001');
   assert.ok(!JSON.stringify(cards).includes('13000000001'));
@@ -107,21 +118,21 @@ function distributionFixture() {
   assert.equal(capturedData.categories.general.total,200*1024); // 成员明细不改写套餐池额度
   const capturedSplit=api.displayMetrics(capturedData,'主副卡分开显示');
   assert.equal(capturedSplit.leftLabel,'主卡·0001'); assert.equal(capturedSplit.rightLabel,'副卡·0002');
-  assert.equal(capturedSplit.left.used,0); assert.equal(capturedSplit.right.used,3859.66);
-  assert.equal(capturedSplit.left.total,null); assert.equal(capturedSplit.left.detail,'已返回明细合计');
+  assert.equal(capturedSplit.left.used,8.81*1024); assert.equal(capturedSplit.right.used,3859.66);
+  assert.equal(capturedSplit.left.total,null); assert.ok(capturedSplit.left.detail.includes('独享'));
 
   const distribution=parsePackages(distributionFixture());
   assert.equal(distribution.categories.directed,null); // 两项均为通用，不冒充定向
   assert.equal(distribution.categories.general.total,200*1024);
   assert.ok(Math.abs(distribution.categories.general.used/1024-12.03)<1e-9);
   const split=api.displayMetrics(distribution);
-  assert.equal(split.leftLabel,'主卡+副卡'); assert.equal(split.rightLabel,'主卡');
+  assert.equal(split.leftLabel,'主卡+副卡'); assert.equal(split.rightLabel,'主卡独享');
   assert.equal(split.left.total,120*1024); assert.equal(split.right.total,80*1024);
   assert.equal(formatMB(split.left.used),'3.22GB'); assert.equal(formatMB(split.right.used),'8.81GB');
   const insideResources=distributionFixture(); insideResources.resources[0].details.push(insideResources.unshared[0].details[0]);delete insideResources.unshared;
   assert.equal(api.displayMetrics(parsePackages(insideResources)).right.total,80*1024); // 赠送包名称识别
   const forced=parsePackages(fixture(),{[base.packages[0].id]:'shared',[base.packages[1].id]:'exclusive'});
-  assert.equal(api.displayMetrics(forced).rightLabel,'主卡');
+  assert.equal(api.displayMetrics(forced).rightLabel,'主卡独享');
   assert.equal(api.displayMetrics(base).leftLabel,'通用'); // 无可靠共享信息时不猜测
   const extra=distributionFixture();extra.mlresources=[{type:'flow',details:[{feePolicyId:'other',feePolicyName:'定向',total:1,use:0.01,remain:0.99}]}];
   assert.equal(api.displayMetrics(parsePackages(extra)).omitted,true);
@@ -192,7 +203,10 @@ function distributionFixture() {
   const visual = await load.runInNewContext({ UNICOM_FLOW_TEST: true, Color, Rect, Size, Path, DrawContext, Font });
   const output = '/private/tmp/unicom-flow-preview'; fs.mkdirSync(output,{recursive:true});
   const visualAt = Date.now();
-  const history = updateHistory(null, { ...distribution, at: visualAt, session:'preview' });
+  const previewFixture=distributionFixture();
+  previewFixture.resources[0].details[0].viceCardlist=[{number:'13000000001',role:'main',use:1.2*1024},{number:'13000000002',role:'vice',use:2.02*1024}];
+  const previewData=parsePackages(previewFixture);
+  const history = updateHistory(null, { ...previewData, at: visualAt, session:'preview' });
   history.events = [8,12,16,17,18,19,20].filter(hour => hour <= new Date().getHours()).map((hour,i)=>({
     from:new Date(new Date().setHours(hour,0,0,0)).getTime(), at:new Date(new Date().setHours(hour,30,0,0)).getTime(), mb:[30,85,40,260,240,280,150][i] }));
   for (const [name,medium,width,height] of [['small',false,158,158],['medium',true,338,158]]) {
@@ -202,12 +216,15 @@ function distributionFixture() {
 
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
+  assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.02GB'));
+  const compositionBar=aligned.match(/x="20" y="70" width="([0-9.]+)" height="3" fill=/);
+  assert.ok(compositionBar); assert.ok(Math.abs(Number(compositionBar[1])-139*1.2/3.22)<1e-8);
   const step=(338-40)/24;
   for(const hour of [0,6,12,18,23]) {
     const expected=20+(hour+0.5)*step;
     const tick=aligned.match(new RegExp('<text x="([0-9.]+)"[^>]*text-anchor="middle"[^>]*>'+String(hour).padStart(2,'0')+'</text>'));
     assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
-    assert.ok(aligned.includes(`x="${expected-0.25}" y="102"`));
+    assert.ok(aligned.includes(`x="${expected-0.25}" y="105"`));
   }
 
   // 小号在不同手机尺寸下使用相同的安全留白，正常状态省略贴近圆角的页脚。
@@ -216,7 +233,7 @@ function distributionFixture() {
     assert.ok(!image.includes('已用 / 总量'));
     const textPositions=[...image.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"/g)];
     assert.ok(textPositions.length>=6);
-    assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=17&&Number(m[2])<=140));
+    assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=14&&Number(m[2])<=150));
   }
 
   for(const theme of ['黑色','白色']) {
@@ -334,29 +351,27 @@ function distributionFixture() {
   instance.settings.flowBoxjsDomain='https://wrong/path';
   assert.throws(()=>instance.applySettings(),/域名格式/);
   assert.ok(!Array.from(files.values()).join('').includes('FAKE_TEST_ONLY'));
-  // 比较版本号；取消和下载校验失败不写入，不创建备份。
-  assert.equal(appApi.validateUpdateSource(source),'1.0.7');
-  assert.equal(appApi.newerVersion('1.0.10','1.0.9'),true);
-  assert.equal(appApi.newerVersion('1.0.1','1.0.1'),false);
-  assert.equal(appApi.newerVersion('1.0.0','1.0.1'),false);
+  // 开发阶段同步：内容不同时直接替换，无版本号要求、无第二次确认、无备份。
+  appApi.validateUpdateSource(source);
+  appApi.validateUpdateSource(source.replace(/^const UF_VERSION.*$/m,''));
   assert.throws(()=>appApi.validateUpdateSource('<html>error</html>'),/不是完整/);
   assert.throws(()=>appApi.validateUpdateSource(source+'\nconst broken = ;'),/语法/);
   const path='/documents/联通流量.js';
   files.set(path,source);
-  await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'无需更新');
+  await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'同步完成');
   const beforeUpdateFiles=Array.from(files.keys()).sort();
-  updateSource=source.replace("const UF_VERSION = '1.0.7';","const UF_VERSION = '1.0.8';");
-  alertChoices.push(-1); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
+  updateSource=source.replace(/^const UF_VERSION.*$/m,'')+'\n// changed content\n';
+  const beforeAlerts=alerts.length;
   await instance.checkAndUpdateScript(); assert.equal(files.get(path),updateSource);
-  assert.equal(alerts.at(-1).title,'更新成功');
-  assert.deepEqual(Array.from(files.keys()).sort(),beforeUpdateFiles); // 只有当前文件被覆盖
-  files.set(path,source); cloudFile=true;
-  await instance.checkAndUpdateScript(); assert.equal(cloudDownloads,1);assert.equal(files.get(path),updateSource);
+  assert.equal(alerts.length,beforeAlerts+1);assert.equal(alerts.at(-1).title,'同步完成');
+  assert.deepEqual(Array.from(files.keys()).sort(),beforeUpdateFiles);
+  files.set(path,source); cloudFile=true;const downloadsBefore=cloudDownloads;
+  await instance.checkAndUpdateScript(); assert.equal(cloudDownloads,downloadsBefore+1);assert.equal(files.get(path),updateSource);
   files.set(path,source); failScriptWrite=true;
   await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'更新未完成');
   assert.match(alerts.at(-1).message,/从仓库重新下载/);
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、更新版本比较/校验/取消/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

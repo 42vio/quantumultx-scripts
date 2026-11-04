@@ -18,7 +18,8 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 */
 
 // UnicomFlow Scriptable Widget
-const UF_VERSION = '1.0.7';
+// 仅供仍检查版本号的旧客户端迁移；本脚本同步功能不再使用此标识。
+const UF_VERSION = '1.0.8';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 
 const UF = {
@@ -60,7 +61,34 @@ function sumPackages(list) {
   };
 }
 
+function sharedComposition(packages, roster = []) {
+  let main = 0, vice = 0, mainKnown = !!packages.length, viceKnown = !!packages.length;
+  for (const pkg of packages) {
+    const unique = new Map();
+    for (const source of pkg.members || []) {
+      const member = roster.find(item => item.id === source.id);
+      const row = { ...source, role: member && member.roleConflict ? '成员卡' : member && member.role !== '成员卡' ? member.role : source.role };
+      if (!unique.has(row.id)) unique.set(row.id, row);
+      else if (unique.get(row.id).used !== row.used || unique.get(row.id).role !== row.role) unique.set(row.id, { ...row, used: null });
+    }
+    const rows = [...unique.values()];
+    for (const [role, add] of [['主卡', value => { main += value; }], ['副卡', value => { vice += value; }]]) {
+      const group = rows.filter(row => row.role === role);
+      const valid = group.length > 0 && group.every(row => Number.isFinite(row.used) && row.used >= 0);
+      if (role === '主卡') mainKnown = mainKnown && valid; else viceKnown = viceKnown && valid;
+      if (valid) add(group.reduce((sum, row) => sum + row.used, 0));
+    }
+  }
+  const used = packages.reduce((sum, pkg) => sum + pkg.used, 0);
+  const complete = mainKnown && viceKnown && Math.abs(main + vice - used) <= Math.max(0.02, used * 1e-6);
+  return { main: mainKnown ? main : null, vice: viceKnown ? vice : null, complete };
+}
+
 function displayMetrics(data, mode = '统一显示') {
+  const general = data.packages.filter(p => p.category === 'general');
+  const shared = general.filter(p => p.shared === true);
+  const exclusive = general.filter(p => p.shared === false);
+  const composition = sharedComposition(shared, data.members || []);
   if (mode === '主副卡分开显示') {
     const members = [...(data.members || [])].sort((a, b) => {
       const rank = m => m.role === '主卡' ? 0 : m.current ? 1 : 2;
@@ -69,6 +97,10 @@ function displayMetrics(data, mode = '统一显示') {
     const metric = member => {
       if (!member) return null;
       const records = member.records.filter(r => r.used != null && !r.conflict);
+      if (member.role === '主卡' && composition.main != null && exclusive.length) {
+        const own = sumPackages(exclusive).used;
+        return { used: composition.main + own, total: null, detail: `共享 ${formatMB(composition.main)} + 独享 ${formatMB(own)}` };
+      }
       return records.length ? { used: records.reduce((sum, r) => sum + r.used, 0), total: null, detail: '已返回明细合计' } : null;
     };
     const label = (member, fallback) => member ? `${member.role}·${member.phone.slice(-4)}` : fallback;
@@ -76,13 +108,10 @@ function displayMetrics(data, mode = '统一显示') {
       rightLabel: label(members[1], '副卡明细'), omitted: members.length > 2, perMember: true,
       note: members.length ? members.length > 2 ? '另有成员 · 菜单查看全部' : '仅含已返回明细 · 非完整账单' : '未返回逐卡明细 · 点击查看' };
   }
-  const general = data.packages.filter(p => p.category === 'general');
-  const shared = general.filter(p => p.shared === true);
-  const exclusive = general.filter(p => p.shared === false);
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
-    return { left: sumPackages(shared), right: sumPackages(exclusive), leftLabel: '主卡+副卡', rightLabel: '主卡', omitted };
+    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '主卡+副卡', rightLabel: '主卡独享', omitted };
   }
   return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false };
 }
@@ -486,19 +515,34 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
 
 function drawMetric(ctx, metric, label, x, y, width, compact) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, title, x, y, width, 15, compact ? 10 : 11);
-  const barY = y + (compact ? 16 : 20), barH = compact ? 36 : 38;
-  roundedRect(ctx, x, barY, 6, barH, 3, UF.track);
-  const ratio = metric && metric.total > 0 ? Math.min(1, Math.max(0, metric.used / metric.total)) : null;
-  if (ratio != null && ratio > 0) roundedRect(ctx, x, barY + barH * (1 - ratio), 6, barH * ratio, 3, UF.blue);
+  text(ctx, title, x, y, width, 14, compact ? 10 : 11);
   const primary = formatMB(metric && metric.used);
   const base = compact ? 22 : 25;
-  const size = Math.min(base, (width - 11) / Math.max(1, primary.length * 0.62));
-  text(ctx, primary, x + 11, y + (compact ? 13 : 17), width - 11, 31, size, UF.text, true);
+  const size = Math.min(base, width / Math.max(1, primary.length * 0.62));
+  text(ctx, primary, x, y + 14, width, 29, size, UF.text, true);
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
-  const detailSize = Math.min(compact ? 12 : 13, (width - 11) / Math.max(1, detail.length * 0.57));
-  text(ctx, detail, x + 11, y + (compact ? 39 : 43), width - 11, 16, detailSize, metric ? UF.text : UF.muted, true);
+  const detailSize = Math.min(compact ? 10 : 11, width / Math.max(1, detail.length * 0.7));
+  text(ctx, detail, x, y + 40, width, 13, detailSize, metric ? UF.muted : UF.warning, true);
+  const barY = y + 54, barH = 3;
+  roundedRect(ctx, x, barY, width, barH, 1.5, UF.track);
+  if (metric && metric.composition) {
+    const c = metric.composition;
+    // 彩条表示共享已用构成；有缺失或总数不一致时不推算成某张卡的流量。
+    if (c.complete && metric.used > 0) {
+      const mainWidth = width * c.main / (c.main + c.vice);
+      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, barY, mainWidth, barH)); }
+      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + mainWidth, barY, width - mainWidth, barH)); }
+    }
+    const half = width / 2;
+    roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
+    roundedRect(ctx, x + half, y + 63, 2.5, 2.5, 1.25, UF.purple);
+    text(ctx, `主 ${formatMB(c.main)}`, x + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
+    text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
+  } else if (metric && metric.total > 0) {
+    const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
+    roundedRect(ctx, x, barY, width * ratio, barH, 1.5, UF.blue);
+  }
 }
 
 function renderImage(result, medium, width, height) {
@@ -518,10 +562,10 @@ function renderImage(result, medium, width, height) {
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 16, col, false);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 16, col, false);
     const buckets = todayBuckets(result.history, Date.now());
-    const chartX = pad, chartY = 102, chartW = width - 2 * pad, chartH = height - chartY - 30;
+    const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
-      chartX, 87, chartW, 12, 8, UF.muted);
+      chartX, 90, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
       const barWidth = Math.max(1, cell - 3);
@@ -538,16 +582,17 @@ function renderImage(result, medium, width, height) {
     });
     [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
   } else {
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 17, width - 2 * pad, true);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 85, width - 2 * pad, true);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 14, width - 2 * pad, true);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true);
   }
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
   const label = result.stale ? `缓存 ${dayKey(data.at).slice(5)} ${time} · 点击重试`
-    : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
+    : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : `已用 / 总量 · ${time}`;
   // 正常的小号组件省略页脚，给底部留出完整留白；异常缓存仍明确提示。
-  if (medium || result.stale || data.warnings.length || metrics.omitted || metrics.perMember) {
-    text(ctx, label, pad + 2, height - 18, width - 2 * pad - 4, 9, 6.5, result.stale || data.warnings.length || metrics.omitted ? UF.warning : UF.muted);
+  if (medium || result.stale || data.warnings.length || metrics.omitted || metrics.perMember || incomplete) {
+    text(ctx, label, pad + 2, height - (medium ? 18 : 14), width - 2 * pad - 4, 9, 6.5, result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   }
   return ctx.getImage();
 }
@@ -613,17 +658,8 @@ function validateUpdateSource(source) {
     || !source.includes('// UnicomFlow Scriptable Widget') || !source.includes('function createWidgetClass(DmYY)')) {
     throw new Error('下载内容不是完整的联通流量脚本，未替换当前文件');
   }
-  const match = source.match(/^const UF_VERSION = ['"](\d+\.\d+\.\d+)['"];$/m);
-  if (!match) throw new Error('无法识别下载脚本的版本，未替换当前文件');
   try { new Function('return (async () => {\n' + source + '\n})'); }
   catch (_) { throw new Error('下载脚本语法检查未通过，未替换当前文件'); }
-  return match[1];
-}
-
-function newerVersion(remote, current) {
-  const a = remote.split('.').map(Number), b = current.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
 }
 
 function installUpdate(fm, path, source) {
@@ -695,20 +731,16 @@ function createWidgetClass(DmYY) {
         const request = new Request(UF_UPDATE_URL + '?t=' + Date.now());
         request.timeoutInterval = 15;
         const source = await request.loadString();
-        const remote = validateUpdateSource(source);
-        if (!newerVersion(remote, UF_VERSION)) return alertMessage('无需更新', `当前版本 ${UF_VERSION}，已是最新版本。`);
+        validateUpdateSource(source);
         const path = module.filename;
         const local = FileManager.local();
         const cloud = local.isFileStoredIniCloud(path);
         const fm = cloud ? FileManager.iCloud() : local;
         if (cloud) await fm.downloadFileFromiCloud(path);
         if (!fm.fileExists(path)) throw new Error('找不到当前脚本文件，已取消更新');
-        const a = new Alert(); a.title = '发现脚本更新';
-        a.message = `${UF_VERSION} → ${remote}\n确认后直接替换脚本，保留主题设置、历史数据和 QX Cookie。`;
-        a.addAction('更新'); a.addCancelAction('取消');
-        if (await a.presentAlert() < 0) return;
+        if (fm.readString(path) === source) return alertMessage('同步完成', '当前脚本已与仓库最新版一致。');
         installUpdate(fm, path, source);
-        await alertMessage('更新成功', `已更新到 ${remote}，关闭配置页后重新运行即可。`);
+        await alertMessage('同步完成', '已同步仓库最新版，关闭配置页后重新运行即可。');
       } catch (error) {
         await alertMessage('更新未完成', error.message || '下载失败，请稍后再试');
       }
@@ -781,8 +813,8 @@ function createWidgetClass(DmYY) {
       return this.renderAppView([{ title: `${light ? '白色' : '黑色'}主题颜色`, menu: [
         { title: '组件底色', val: prefix + 'CardColor', type: 'color', defaultValue: '#' + palette.bg, icon: { name: 'square.fill', color: '#555555' } },
         { title: '数字与标题', val: prefix + 'NumberColor', type: 'color', defaultValue: '#' + palette.text, icon: { name: 'textformat', color: '#007AFF' } },
-        { title: '流量进度条', val: prefix + 'FlowBarColor', type: 'color', defaultValue: '#' + palette.blue, icon: { name: 'chart.bar.fill', color: '#0A94FF' } },
-        { title: '历史用量图', val: prefix + 'ChartBarColor', type: 'color', defaultValue: '#' + palette.purple, icon: { name: 'chart.bar.xaxis', color: '#8A73FF' } },
+        { title: '主卡颜色', val: prefix + 'FlowBarColor', type: 'color', defaultValue: '#' + palette.blue, icon: { name: 'chart.bar.fill', color: '#0A94FF' } },
+        { title: '副卡与用量图', val: prefix + 'ChartBarColor', type: 'color', defaultValue: '#' + palette.purple, icon: { name: 'chart.bar.xaxis', color: '#8A73FF' } },
       ] }]);
     }
 

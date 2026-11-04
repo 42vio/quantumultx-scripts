@@ -314,7 +314,8 @@ function distributionFixture() {
   const html=api.statisticsHTML(api.statisticsReports(zero,midnight+3600000),true);
   new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
-  assert.ok(html.includes('user-scalable=no'));assert.ok(html.includes('touch-action:manipulation'));assert.ok(html.includes('calc(64px + env(safe-area-inset-top,0px))'));
+  assert.ok(html.includes('user-scalable=no'));assert.ok(html.includes('touch-action:manipulation'));assert.ok(html.includes('padding:56px 18px 30px'));assert.ok(!html.includes('safe-area-inset-top'));
+  assert.ok(!html.includes('.bar.selected{'));assert.ok(html.includes('.bar.selected .tick{background:var(--blue);color:#fff'));
   assert.ok(html.includes('>今日</button>'));assert.ok(html.includes('>月度趋势</button>'));
   let prevented=false;listeners.get('dblclick')({preventDefault:()=>{prevented=true;}});assert.equal(prevented,true);
 
@@ -323,7 +324,7 @@ function distributionFixture() {
   assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
   assert.equal(monthBars[4].children[0].style.height,'0px');assert.ok(monthBars[4].children[0].className.includes('future'));
   assert.equal(elements.get('selected').textContent,'2026-11-04');assert.equal(elements.get('selected-total').textContent,'0.00 MB');
-  elements.get('chart').children[1].onclick();assert.equal(elements.get('selected').textContent,'2026-11-02');assert.equal(elements.get('selected-total').textContent,'—');
+  elements.get('chart').children[1].onclick();assert.equal(monthBars[1].attributes['aria-pressed'],'true');assert.equal(monthBars[3].attributes['aria-pressed'],'false');assert.equal(elements.get('selected').textContent,'2026-11-02');assert.equal(elements.get('selected-total').textContent,'—');
   elements.get('rows').children[2].children[0].children[0].onclick();assert.equal(elements.get('selected').textContent,'2026-11-03');
   elements.get('tab-hours').onclick();assert.equal(elements.get('chart').children.length,24);assert.equal(elements.get('rows').children.length,24);
   assert.equal(elements.get('tab-hours').attributes['aria-pressed'],'true');assert.equal(elements.get('tab-month').attributes['aria-pressed'],'false');

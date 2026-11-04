@@ -239,6 +239,11 @@ function distributionFixture() {
   const pageCode=html.match(/<script>([\s\S]*?)<\/script>/)[1];
   new vm.Script(pageCode).runInNewContext({document:doc});
   assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
+  const monthBars=elements.get('chart').children;
+  assert.equal(monthBars[0].children[0].style.height,'4px');assert.ok(monthBars[0].children[0].className.includes('missing'));
+  assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
+  assert.equal(monthBars[4].children[0].style.height,'0px');assert.ok(monthBars[4].children[0].className.includes('future'));
+
   assert.equal(elements.get('selected').textContent,'2026-11-04');
   assert.ok(elements.get('detail').textContent.includes('0.00 MB'));
   elements.get('chart').children[1].onclick();
@@ -314,6 +319,19 @@ function distributionFixture() {
     assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
     assert.ok(aligned.includes(`x="${expected-0.25}" y="105"`));
   }
+
+  // 过去小时灰色占位、真实零增量为紫色；当前无采样及未来小时不画柱。
+  const fixedNoon=new Date(2026,10,4,12,30).getTime();
+  class NoonDate extends Date {static now(){return fixedNoon;}}
+  const noonVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:NoonDate,Color,Rect,Size,Path,DrawContext,Font});
+  const emptyHours={...history,data:{...history.data,at:fixedNoon},events:[]};
+  const dayImage=noonVisual.renderImage({history:emptyHours,stale:false},true,338,158);
+  const hourlyBar=hour=>`x="${13+(hour+0.5)*13-5}" y="126.5" width="10" height="1.5"`;
+  for(let hour=0;hour<12;hour++) assert.ok(dayImage.includes(hourlyBar(hour)+' fill="#454548"'));
+  for(let hour=12;hour<24;hour++) assert.ok(!dayImage.includes(hourlyBar(hour)));
+  const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
+  const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158);
+  assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
 
   // 小号在不同手机尺寸下使用相同的安全留白，始终显示查询时间与刷新入口。
   for (const side of [141,158,170]) {

@@ -461,11 +461,11 @@ function monthlyHTML(report, stale = false) {
   return `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     :root{color-scheme:${UF.bg === 'FFFFFF' ? 'light' : 'dark'}}*{box-sizing:border-box}body{margin:0;padding:24px 18px;background:#${UF.bg};color:#${UF.text};font:15px -apple-system,sans-serif}
     h1{font-size:25px;margin:0 0 8px}h2{font-size:18px}.muted{color:#${UF.muted};line-height:1.7}strong{font-size:27px;font-weight:500}.panel{padding:18px 0;border-bottom:1px solid #${UF.track}}
-    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple}}.missing{background:transparent;border-bottom:1px dashed #${UF.muted}}.day{font-size:10px;color:#${UF.muted}}
+    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple}}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
     table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
     </style></head><body><h1 id="title">本月用量</h1><div class="muted">采样估算 · 非运营商日账单${stale ? ' · 当前为缓存' : ''}</div>
     <section class="panel"><div class="muted">已记录的同日区间用量</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
-    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div></section>
+    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">紫色：已采样；灰色短柱：无数据。短柱仅作占位，用量以数值为准。</p></section>
     <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><table><thead><tr><th>日期</th><th>区间估算</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table>
     <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；跨月、套餐变化和计数回退时重新建立基线，已有日记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
     <p id="updated" class="muted"></p><script>
@@ -479,7 +479,7 @@ function monthlyHTML(report, stale = false) {
     byId('coverage').textContent='有同日区间记录 '+report.days.filter(d=>d.mb!=null).length+' 天；其余日期未补零。';
     byId('unallocated').textContent='跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
     const max=Math.max(1,...report.days.map(d=>d.mb||0));
-    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.mb==null?' missing':'');fill.style.height=(d.mb==null?1:Math.max(2,d.mb/max*110))+'px';const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
+    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*110))+'px';const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
     const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=d.key.slice(5);button.onclick=()=>select(d);date.append(button);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,value,status);byId('rows').append(tr);}
     for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb);byId('cross').append(p);}
     byId('updated').textContent='最后成功查询：'+new Date(report.lastSuccess).toLocaleString('zh-CN',{hour12:false});select(report.days.find(d=>d.key===report.today)||report.days[0]);
@@ -681,6 +681,7 @@ function renderImage(result, medium, width, height) {
     const buckets = todayBuckets(result.history, Date.now());
     const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
+    const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
     text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
       chartX, 90, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
@@ -688,13 +689,15 @@ function renderImage(result, medium, width, height) {
       const barWidth = Math.max(1, cell - 3);
       ctx.setFillColor(new Color(hour % 6 === 0 ? UF.gridMajor : UF.gridMinor));
       ctx.fillRect(new Rect(center - 0.25, chartY, 0.5, chartH));
+      if (hour > currentHour) return;
       if (bucket.mb > 0) {
-        const h = Math.max(1, bucket.mb / max * chartH);
+        const h = Math.max(minimumBar, bucket.mb / max * chartH);
         ctx.setFillColor(new Color(UF.purple));
         ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - h, barWidth, h));
-      } else if (bucket.samples) {
-        ctx.setFillColor(new Color(UF.purple));
-        ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - 1, barWidth, 1));
+      } else if (bucket.samples || hour < currentHour) {
+        // 灰色是缺少采样的占位，不计入用量；紫色短柱表示真实零增量。
+        ctx.setFillColor(new Color(bucket.samples ? UF.purple : UF.track));
+        ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - minimumBar, barWidth, minimumBar));
       }
     });
     [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));

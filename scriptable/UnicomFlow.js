@@ -497,9 +497,9 @@ async function refresh(store) {
 }
 
 // ---- 所有布局均由 Scriptable 原生绘图生成 ----
-function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false) {
+function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false, medium = false) {
   ctx.setTextColor(new Color(color));
-  ctx.setFont(mono ? Font.regularMonospacedSystemFont(size) : Font.mediumSystemFont(size));
+  ctx.setFont(mono ? Font.regularMonospacedSystemFont(size) : medium ? Font.mediumSystemFont(size) : Font.systemFont(size));
   if (centered) ctx.setTextAlignedCenter(); else ctx.setTextAlignedLeft();
   ctx.drawTextInRect(value, new Rect(x, y, width, height));
 }
@@ -515,15 +515,15 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
 
 function drawMetric(ctx, metric, label, x, y, width, compact) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, title, x, y, width, 14, compact ? 10 : 11);
+  text(ctx, title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
   const primary = formatMB(metric && metric.used);
   const base = compact ? 22 : 25;
   const size = Math.min(base, width / Math.max(1, primary.length * 0.62));
-  text(ctx, primary, x, y + 14, width, 29, size, UF.text, true);
+  text(ctx, primary, x, y + 14, width, 29, size, UF.text);
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   const detailSize = Math.min(compact ? 10 : 11, width / Math.max(1, detail.length * 0.7));
-  text(ctx, detail, x, y + 40, width, 13, detailSize, metric ? UF.muted : UF.warning, true);
+  text(ctx, detail, x, y + 40, width, 13, detailSize, metric ? UF.muted : UF.warning);
   const barY = y + 54, barH = 3;
   roundedRect(ctx, x, barY, width, barH, 1.5, UF.track);
   if (metric && metric.composition) {

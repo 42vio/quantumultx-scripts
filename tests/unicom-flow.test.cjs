@@ -196,10 +196,10 @@ function distributionFixture() {
     fillRect(r) { this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${this.fill}"/>`); }
     addPath(p) { this.path=p; }
     fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" fill="${this.fill}"/>`); }
-    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.mono?'Menlo,monospace':'sans-serif'}" font-size="${this.font.size}">${esc(t)}</text>`); }
+    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.mono?'Menlo,monospace':'sans-serif'}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
     getImage() { assert.ok(this.parts.length); return `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width*3}" height="${this.size.height*3}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="card"><rect width="100%" height="100%" rx="20"/></clipPath></defs><g clip-path="url(#card)">${this.parts.join('')}</g></svg>`; }
   }
-  const Font = { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size}) };
+  const Font = { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size,weight:500}), systemFont:size=>({size}) };
   const visual = await load.runInNewContext({ UNICOM_FLOW_TEST: true, Color, Rect, Size, Path, DrawContext, Font });
   const output = '/private/tmp/unicom-flow-preview'; fs.mkdirSync(output,{recursive:true});
   const visualAt = Date.now();

@@ -867,18 +867,23 @@ function renderImage(result, medium, width, height) {
   text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = 84, legendX = width - pad - 70;
+    const legendY = 84;
     const sampled = buckets.some(b => b.samples);
     const unknown = buckets.reduce((sum, b) => sum + b.unknownMB, 0);
-    [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].forEach(([color, name, key], index) => {
+    const legends = [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].map(([color, name, key]) => {
       const used = buckets.reduce((sum, b) => sum + b[key], 0);
       // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
       const value = sampled && (used > 0 || unknown === 0) ? formatMB(used) : '—';
-      const y = legendY + index * 10, caption = name + ' ' + value;
-      // 右对齐文字，圆点随内容宽度靠近文字，避免两者之间留下整块空白。
-      const captionWidth = Math.min(65, Array.from(caption).reduce((sum, c) => sum + 6.5 * (c.charCodeAt(0) > 255 ? 1 : c === ' ' ? 0.3 : 0.6), 0));
-      roundedRect(ctx, width - pad - captionWidth - 5, y + 3, 2.5, 2.5, 1.25, color);
-      text(ctx, caption, legendX + 5, y, 65, 9, 6.5, UF.muted, false, 'right');
+      return { color, caption: name + ' ' + value };
+    });
+    // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
+    const captionWidth = Math.min(65, Math.ceil(Math.max(...legends.map(({ caption }) =>
+      Array.from(caption).reduce((sum, c) => sum + 6.5 * (c.charCodeAt(0) > 255 ? 1 : c === ' ' ? 0.3 : 0.6), 0)))) + 2);
+    const legendX = width - pad - captionWidth - 5;
+    legends.forEach(({ color, caption }, index) => {
+      const y = legendY + index * 10;
+      roundedRect(ctx, legendX, y + 3, 2.5, 2.5, 1.25, color);
+      text(ctx, caption, legendX + 5, y, captionWidth, 9, 6.5, UF.muted);
     });
     // 使用文字颜色绘制图标，点击区域另由透明布局提供。
     text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);

@@ -433,9 +433,10 @@ function distributionFixture() {
   const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
-  // 两行今日图例在图表右上角，文字右端与图表边界一致。
-  const dailyLegends=[...aligned.matchAll(/<text x="325" y="([0-9.]+)" text-anchor="end"[^>]*>[主副] [^<]+<\/text>/g)];
-  assert.equal(dailyLegends.length,2);assert.equal(Number(dailyLegends[0][1]),90.5);assert.equal(Number(dailyLegends[1][1]),100.5);
+  // 今日图例整组靠右，两行本身左对齐。
+  const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(90.5|100.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
+  assert.equal(dailyLegends.length,2);assert.equal(dailyLegends[0][1],dailyLegends[1][1]);
+  assert.ok(Number(dailyLegends[0][1])>270);assert.equal(Number(dailyLegends[0][2]),90.5);assert.equal(Number(dailyLegends[1][2]),100.5);
   const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>更新 [^<]+<\/text>/);
   assert.ok(footerTime);assert.equal(Number(footerTime[1]),146.5);
   const step=(338-26)/24;
@@ -467,6 +468,10 @@ function distributionFixture() {
 
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
+  const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
+  const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:90.5|100.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
+  assert.equal(unevenLegends.length,2);assert.equal(unevenLegends[0][1],unevenLegends[1][1]);
+  assert.ok(unevenWidget.includes('>主 6.0MB</text>'));assert.ok(unevenWidget.includes('>副 1.0GB</text>'));
   assert.ok(stackedWidget.includes('>主 60.0MB</text>'));assert.ok(stackedWidget.includes('>副 30.0MB</text>'));
   const hour10x=13+(10+0.5)*13-5;
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23*60/90}" width="10" height="${23*60/90}" fill="#0A94FF"`));

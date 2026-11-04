@@ -537,6 +537,7 @@ function distributionFixture() {
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
   const presented=[], feedback=[];
+  let fontSizeInput='24';
   class WebView {
     async loadHTML(html){this.entry={html,updates:[],requestsAtOpen:requestCount};feedback.push(this.entry);}
     async present(){this.entry.presented=true;}
@@ -553,6 +554,7 @@ function distributionFixture() {
     setPadding(){} addImage(){return {};} addText(value){(this.texts=this.texts||[]).push(String(value));return {};} addSpacer(){}
   }
   class Alert {
+    addTextField(){} textFieldValue(){return fontSizeInput;}
     addAction(){} addCancelAction(){}
     async presentSheet(){return this.presentAlert();}
     async presentAlert(){alerts.push({title:this.title,message:this.message});return alertChoices.length?alertChoices.shift():0;}
@@ -659,31 +661,68 @@ function distributionFixture() {
   instance.settings.flowBarColor='#ABCDEF';
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
-  const fontMenu=instance._menuActions.flatMap(group=>group.menu).find(item=>item.val==='numberFont');
-  assert.equal(fontMenu.options.join(','),'SF Mono Regular,Menlo Regular');
+  const fontAction=instance._menuActions.flatMap(group=>group.menu).find(item=>item.name==='flowFonts');
+  assert.ok(fontAction);
+  const typography=await fontAction.onClick();
+  assert.equal(typography.options.length,2);
+  for(const [i,kind] of ['usage','total'].entries()) {
+    const menu=typography.options[i].menu;
+    assert.equal(menu[0].val,kind+'Font');
+    assert.equal(menu[0].options.join(','),'系统 Regular,系统 Medium,SF Mono Regular,SF Mono Medium,Menlo Regular');
+    assert.equal(menu[1].val,kind+'FontSize');
+    assert.equal(menu[1].defaultValue,kind==='usage'?'22':'10');
+  }
+  fontSizeInput='25.5';await typography.options[0].menu[1].onClick();
+  assert.equal(instance.settings.usageFontSize,'25.5');
+  for(const invalid of ['', 'abc', '29', '0']) {
+    fontSizeInput=invalid;await typography.options[0].menu[1].onClick();
+    assert.equal(instance.settings.usageFontSize,'25.5');assert.equal(alerts.at(-1).title,'未保存');
+  }
+  alertChoices.push(-1);fontSizeInput='20';await typography.options[0].menu[1].onClick();
+  assert.equal(instance.settings.usageFontSize,'25.5');
+  fontSizeInput='12.5';await typography.options[1].menu[1].onClick();
+  assert.equal(instance.settings.totalFontSize,'12.5');
+  instance.settings.usageFontSize='22';instance.settings.totalFontSize='10';
   for(const theme of ['黑色','白色']) {
     instance.settings.theme=theme;
-    for(const [label,fontFamily] of [['SF Mono Regular','Menlo,monospace'],['Menlo Regular','Menlo-Regular']]) {
-      instance.settings.numberFont=label;
+    for(const [label,fontFamily,weight] of [['系统 Regular','sans-serif',400],['系统 Medium','sans-serif',500],['SF Mono Regular','Menlo,monospace',400],['SF Mono Medium','Menlo,monospace',500],['Menlo Regular','Menlo-Regular',400]]) {
+      instance.settings.usageFont=label; instance.settings.totalFont=label;
       for(const family of ['small','medium']) {
         const fontWidget=family==='small'?await instance.renderSmall():await instance.renderMedium();
-        const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="([^"]+)" font-weight="400"[^>]*>([^<]+)<\/text>/g)].filter(m=>m[1]===fontFamily).map(m=>m[2]);
-        assert.ok(numericTexts.some(value=>value.endsWith('GB')));
+        const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="([^"]+)" font-weight="([0-9]+)"[^>]*>([^<]+)<\/text>/g)].filter(m=>m[1]===fontFamily && Number(m[2])===weight).map(m=>m[3]);
+        assert.ok(numericTexts.includes('GB'));
         assert.ok(numericTexts.some(value=>value.includes('%')));
       }
     }
   }
-  for(const [oldFont,expected] of [['SF Mono Semibold（半粗体）','SF Mono Regular'],['SF Mono Medium（中等）','SF Mono Regular'],['系统等宽','SF Mono Regular'],['SF Pro Light（细体）','SF Mono Regular'],[undefined,'SF Mono Regular'],['未知字体','SF Mono Regular'],['Menlo','Menlo Regular'],['Menlo Regular','Menlo Regular']]) {
+  for(const [oldFont,expected] of [['SF Mono Semibold（半粗体）','SF Mono Regular'],['系统等宽','SF Mono Regular'],[undefined,'SF Mono Regular'],['未知字体','SF Mono Regular'],['Menlo','Menlo Regular'],['Menlo Regular','Menlo Regular']]) {
     class LegacyFontDmYY extends MockDmYY {constructor(arg){super(arg);this.settings.numberFont=oldFont;}}
     const LegacyFontWidget=appApi.createWidgetClass(LegacyFontDmYY);
     const migratedFont=new LegacyFontWidget('');
-    assert.equal(migratedFont.settings.numberFont,expected);
+    assert.equal(migratedFont.settings.usageFont,expected);assert.equal(migratedFont.settings.totalFont,expected);
   }
-  unavailableFont=true; instance.settings.numberFont='Menlo Regular';
+  unavailableFont=true; instance.settings.usageFont='Menlo Regular';instance.settings.totalFont='Menlo Regular';
   const fallbackFontWidget=await instance.renderSmall();
   assert.ok(fallbackFontWidget.backgroundImage.includes('font-family="Menlo,monospace" font-weight="400" font-size="22"'));
   unavailableFont=false;
-  instance.settings.numberFont='SF Mono Regular';
+  // 大小号共享字号，且用量与总量可独立混用字体、字重。
+  instance.settings.usageFont='系统 Medium';instance.settings.totalFont='Menlo Regular';
+  instance.settings.usageFontSize='24';instance.settings.totalFontSize='11.5';
+  for(const family of ['small','medium']) {
+    const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
+    assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3<\/text>/);
+    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27GB \(9%\)<\/text>/);
+    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27GB \(9%\)<\/text>/g)];
+    assert.equal(rows.length,2);assert.equal(rows[0][1],rows[1][2]);
+  }
+  // 过宽数字缩小后单位仍在卡片安全区；非法字号回退默认。
+  instance.settings.usageFont='SF Mono Regular';instance.settings.totalFont='SF Mono Regular';
+  instance.settings.usageFontSize='NaN';instance.settings.totalFontSize='999';
+  const invalidSize=await instance.renderSmall();
+  assert.ok(!invalidSize.backgroundImage.includes('NaN'));
+  assert.match(invalidSize.backgroundImage,/font-size="22">2.3<\/text>/);
+  assert.match(invalidSize.backgroundImage,/font-size="10">27GB/);
+  instance.settings.usageFontSize='22';instance.settings.totalFontSize='10';
 
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));
   files.delete('/documents/UnicomFlow/history.json'); dataPayload=cardFixture;

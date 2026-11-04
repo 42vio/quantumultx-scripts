@@ -107,30 +107,11 @@ function sharedComposition(packages, roster = []) {
   return { main: mainKnown ? main : null, vice: viceKnown ? vice : null, complete };
 }
 
-function displayMetrics(data, mode = '统一显示') {
+function displayMetrics(data) {
   const general = data.packages.filter(p => p.category === 'general');
   const shared = general.filter(p => p.shared === true);
   const exclusive = general.filter(p => p.shared === false);
   const composition = sharedComposition(shared, data.members || []);
-  if (mode === '主副卡分开显示') {
-    const members = [...(data.members || [])].sort((a, b) => {
-      const rank = m => m.role === '主卡' ? 0 : m.current ? 1 : 2;
-      return rank(a) - rank(b) || a.id.localeCompare(b.id);
-    });
-    const metric = member => {
-      if (!member) return null;
-      const records = member.records.filter(r => r.used != null && !r.conflict);
-      if (member.role === '主卡' && composition.main != null && exclusive.length) {
-        const own = sumPackages(exclusive).used;
-        return { used: composition.main + own, total: null, detail: `共享 ${formatMB(composition.main)} + 独享 ${formatMB(own)}` };
-      }
-      return records.length ? { used: records.reduce((sum, r) => sum + r.used, 0), total: null, detail: '已返回明细合计' } : null;
-    };
-    const label = (member, fallback) => member ? `${member.role}·${member.phone.slice(-4)}` : fallback;
-    return { left: metric(members[0]), right: metric(members[1]), leftLabel: label(members[0], '主卡明细'),
-      rightLabel: label(members[1], '副卡明细'), omitted: members.length > 2, perMember: true,
-      note: members.length ? members.length > 2 ? '另有成员 · 菜单查看全部' : '仅含已返回明细 · 非完整账单' : '未返回逐卡明细 · 点击查看' };
-  }
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
@@ -798,10 +779,17 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   text(ctx, title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
   const primary = formatMB(metric && metric.used);
   const textX = x + 10, textWidth = width - 10;
-  // 数字与单位共用字体、字重和字号，使用一个空格分隔；整行超宽时同步缩小。
-  const usageText = primary.replace(/(MB|GB)$/, ' $1');
-  const usageSize = Math.min(UF.usageFontSize, textWidth / Math.max(1, numberWidth(usageText, 1, 'usage')));
-  text(ctx, usageText, textX, y + 14, textWidth, 30, usageSize, UF.text, 'number');
+  // 等宽字体的普通空格过宽，数字与单位分开绘制，同字号并只留 2 点间距。
+  const parts = primary.match(/^(.*?)(MB|GB)$/);
+  if (parts) {
+    const gap = 2;
+    const size = Math.min(UF.usageFontSize, (textWidth - gap) / Math.max(1, numberWidth(parts[1] + parts[2], 1, 'usage')));
+    const unitX = textX + numberWidth(parts[1], size, 'usage') + gap;
+    text(ctx, parts[1], textX, y + 14, unitX - textX, 30, size, UF.text, 'number');
+    text(ctx, parts[2], unitX, y + 14, Math.max(1, textX + textWidth - unitX), 30, size, UF.text, 'number');
+  } else {
+    text(ctx, primary, textX, y + 14, textWidth, 30, UF.usageFontSize, UF.text, 'number');
+  }
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   detail = detail.replace(/(\d)(MB|GB)/g, '$1 $2');
@@ -844,7 +832,7 @@ function renderImage(result, medium, width, height) {
   ctx.setFillColor(new Color(UF.bg));
   ctx.fillRect(new Rect(0, 0, width, height));
   const data = result.history.data, pad = 13;
-  const metrics = displayMetrics(data, UF.displayMode);
+  const metrics = displayMetrics(data);
   const buckets = medium ? todayBuckets(result.history, Date.now()) : [];
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
@@ -885,9 +873,9 @@ function renderImage(result, medium, width, height) {
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
   const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
   const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击右上角重试`
-    : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
+    : incomplete ? '逐卡明细未补全 · 暂不分色' : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
   const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`
-    : incomplete ? '逐卡明细不全' : metrics.perMember ? '逐卡明细' : status ? '另有明细' : '';
+    : incomplete ? '逐卡明细不全' : status ? '另有明细' : '';
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
@@ -1018,6 +1006,9 @@ function createWidgetClass(DmYY) {
       super(arg);
       // 已有数字字体迁移到两个独立选项，不改变历史数据。
       let changed = false;
+      if (Object.prototype.hasOwnProperty.call(this.settings, 'displayMode')) {
+        delete this.settings.displayMode; changed = true;
+      }
       for (const kind of ['usage', 'total']) {
         const key = kind + 'Font';
         const font = normalizedNumberFont(this.settings[key] || this.settings.numberFont, UF_DEFAULTS[key]);
@@ -1057,7 +1048,6 @@ function createWidgetClass(DmYY) {
         UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
         UF[kind + 'FontSize'] = normalizedFontSize(this.settings[kind + 'FontSize'], kind);
       }
-      UF.displayMode = this.settings.displayMode === '主副卡分开显示' ? '主副卡分开显示' : '统一显示';
     }
 
     async loadResult() {
@@ -1215,7 +1205,6 @@ function createWidgetClass(DmYY) {
       const action = (name, title, symbol, color, onClick) => ({ name, title, type: 'input', icon: { name: symbol, color }, onClick });
       this.registerAction({ title: '组件配置', menu: [
         action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
-        { name: 'displayMode', val: 'displayMode', title: '显示方式', type: 'select', options: ['统一显示', '主副卡分开显示'], defaultValue: '统一显示', icon: { name: 'person.2.fill', color: '#5856D6' } },
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
         action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
         action('flowCategories', '套餐分类', 'list.bullet', '#007AFF', async () => {

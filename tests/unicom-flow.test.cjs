@@ -27,13 +27,9 @@ function distributionFixture() {
   cardFixture.viceCardLits=[{number:'13000000001',role:'main'}, {number:'13000000002',role:'vice'}];
   cardFixture.resources[0].details[0].viceCardlist=[{number:'13000000001',use:1.22*1024},{number:'13000000002',use:2*1024,currentLoginFlag:'1'}];
   const cards=parsePackages(cardFixture);
-  const splitCards=api.displayMetrics(cards,'主副卡分开显示');
-  assert.equal(splitCards.leftLabel,'主卡·0001'); assert.equal(splitCards.rightLabel,'副卡·0002');
-  assert.equal(splitCards.left.used,(1.22+8.81)*1024); assert.equal(splitCards.right.used,2*1024);
-  assert.equal(splitCards.left.total,null); assert.ok(splitCards.left.detail.includes('独享'));
   const c=api.displayMetrics(cards).left.composition;
   assert.equal(c.complete,true);assert.equal(c.main,1.22*1024);assert.equal(c.vice,2*1024);
-  assert.equal(api.displayMetrics(cards,'统一显示').leftLabel,'共享流量');
+  assert.equal(api.displayMetrics(cards).leftLabel,'共享流量');
   const compositionRows = [{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:12}];
   const composition = (members, used=12) => api.sharedComposition([{used,members}]);
   assert.equal(composition(compositionRows).complete,true); // 主卡为零，整条紫色
@@ -51,7 +47,7 @@ function distributionFixture() {
   assert.ok(report.includes('shareData.details[0].viceCardList'));
   assert.ok(!report.includes('SECRET_COOKIE'));assert.ok(!report.includes('13000000001'));
 
-  assert.equal(api.displayMetrics(base,'主副卡分开显示').left,null);
+  assert.equal(api.displayMetrics(base).left,base.categories.general);
 
   assert.equal(cards.members.length,2); assert.equal(cards.members[0].role,'主卡'); assert.equal(cards.members[1].role,'副卡');
   assert.equal(cards.members[1].current,true); assert.equal(cards.members[1].records[0].used,2048);
@@ -116,10 +112,9 @@ function distributionFixture() {
   assert.equal(capturedData.members[0].records.length,1); assert.equal(capturedData.members[0].records[0].used,0);
   assert.equal(capturedData.members[1].records.length,1); assert.equal(capturedData.members[1].records[0].used,3859.66);
   assert.equal(capturedData.categories.general.total,200*1024); // 成员明细不改写套餐池额度
-  const capturedSplit=api.displayMetrics(capturedData,'主副卡分开显示');
-  assert.equal(capturedSplit.leftLabel,'主卡·0001'); assert.equal(capturedSplit.rightLabel,'副卡·0002');
-  assert.equal(capturedSplit.left.used,8.81*1024); assert.equal(capturedSplit.right.used,3859.66);
-  assert.equal(capturedSplit.left.total,null); assert.ok(capturedSplit.left.detail.includes('独享'));
+  const capturedMetrics=api.displayMetrics(capturedData);
+  assert.equal(capturedMetrics.leftLabel,'共享流量');assert.equal(capturedMetrics.rightLabel,'主卡独享');
+  assert.equal(capturedMetrics.left.used,3.22*1024);assert.equal(capturedMetrics.right.used,8.81*1024);
 
   const distribution=parsePackages(distributionFixture());
   assert.equal(distribution.categories.directed,null); // 两项均为通用，不冒充定向
@@ -633,7 +628,7 @@ function distributionFixture() {
   const menus=instance._menuActions.flatMap(group=>group.menu);
   assert.equal(new Set(menus.map(item=>item.name)).size,menus.length);
   assert.ok(menus.some(item=>item.title==='组件主题' && item.options.join(',')==='黑色,白色'));
-  assert.ok(menus.some(item=>item.title==='显示方式' && item.options.join(',')==='统一显示,主副卡分开显示'));
+  assert.ok(!menus.some(item=>item.title==='显示方式' || item.val==='displayMode'));
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
   assert.ok(menus.some(item=>item.title==='用量统计'));
   assert.ok(!menus.some(item=>['本月用量','近12个月'].includes(item.title)));
@@ -676,13 +671,20 @@ function distributionFixture() {
   assert.equal(instance.settings.totalFont,'系统 Medium');
   for (const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    assert.match(w.backgroundImage, /y="51"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="25">2.3 GB<\/text>/);
+    assert.match(w.backgroundImage, /y="51"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="25">2.3<\/text>/);
     assert.match(w.backgroundImage, /y="67"[^>]*font-family="sans-serif" font-weight="500" font-size="11">27 GB/);
+    const runs=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="([0-9.]+)">([^<]+)<\/text>/g)];
+    const number=runs.find(row=>row[4]==='2.3'), unit=runs.find(row=>row[4]==='GB');
+    assert.ok(number && unit);assert.equal(number[2],unit[2]);assert.equal(number[3],unit[3]);
+    assert.ok(Math.abs(Number(unit[1])-Number(number[1])-3*25*0.62-2)<1e-8);
+
   }
   const presetInstance=settings=>{
     class PresetDmYY extends MockDmYY {constructor(arg){super(arg);this.settings={...settings};}}
     return new (appApi.createWidgetClass(PresetDmYY))('');
   };
+  const obsoleteMode=presetInstance({displayMode:'主副卡分开显示'});
+  assert.equal(Object.prototype.hasOwnProperty.call(obsoleteMode.settings,'displayMode'),false);
   const migratedDefault=presetInstance({usageFont:'SF Mono Regular',totalFont:'SF Mono Regular',usageFontSize:'22',totalFontSize:'10'});
   assert.equal(migratedDefault.settings.usageFont,'SF Mono Medium');assert.equal(migratedDefault.settings.totalFont,'系统 Medium');
   assert.equal(migratedDefault.settings.usageFontSize,'25');assert.equal(migratedDefault.settings.totalFontSize,'11');
@@ -709,7 +711,7 @@ function distributionFixture() {
       for(const family of ['small','medium']) {
         const fontWidget=family==='small'?await instance.renderSmall():await instance.renderMedium();
         const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="([^"]+)" font-weight="([0-9]+)"[^>]*>([^<]+)<\/text>/g)].filter(m=>m[1]===fontFamily && Number(m[2])===weight).map(m=>m[3]);
-        assert.ok(numericTexts.some(value=>value.endsWith(' GB')));
+        assert.ok(numericTexts.includes('GB'));
         assert.ok(numericTexts.some(value=>value.includes('%')));
       }
     }
@@ -729,9 +731,9 @@ function distributionFixture() {
   instance.settings.usageFontSize='24';instance.settings.totalFontSize='11.5';
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3 GB<\/text>/);
+    assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3<\/text>/);
     assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27 GB \(9%\)<\/text>/);
-    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3 GB<\/text>|<text x="([0-9.]+)"[^>]*>27 GB \(9%\)<\/text>/g)];
+    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27 GB \(9%\)<\/text>/g)];
     assert.equal(rows.length,2);assert.equal(rows[0][1],rows[1][2]);
   }
   // 过宽数字缩小后单位仍在卡片安全区；非法字号回退默认。
@@ -739,7 +741,7 @@ function distributionFixture() {
   instance.settings.usageFontSize='NaN';instance.settings.totalFontSize='999';
   const invalidSize=await instance.renderSmall();
   assert.ok(!invalidSize.backgroundImage.includes('NaN'));
-  assert.match(invalidSize.backgroundImage,/font-size="25">2.3 GB<\/text>/);
+  assert.match(invalidSize.backgroundImage,/font-size="25">2.3<\/text>/);
   assert.match(invalidSize.backgroundImage,/font-size="11">27 GB/);
   instance.settings.usageFontSize='22';instance.settings.totalFontSize='10';
 

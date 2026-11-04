@@ -196,10 +196,12 @@ function distributionFixture() {
     fillRect(r) { this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${this.fill}"/>`); }
     addPath(p) { this.path=p; }
     fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" fill="${this.fill}"/>`); }
-    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.mono?'Menlo,monospace':'sans-serif'}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
+    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.name || (this.font.mono?'Menlo,monospace':'sans-serif')}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
     getImage() { assert.ok(this.parts.length); return `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width*3}" height="${this.size.height*3}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="card"><rect width="100%" height="100%" rx="20"/></clipPath></defs><g clip-path="url(#card)">${this.parts.join('')}</g></svg>`; }
   }
-  const Font = { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size,weight:500}), systemFont:size=>({size}) };
+  let unavailableFont=false;
+  class Font { constructor(name,size) { if(unavailableFont) throw new Error('missing font'); Object.assign(this,{name,size}); } }
+  Object.assign(Font, { regularMonospacedSystemFont: size => ({size,mono:true}), mediumSystemFont:size=>({size,weight:500}), systemFont:size=>({size}) });
   const visual = await load.runInNewContext({ UNICOM_FLOW_TEST: true, Color, Rect, Size, Path, DrawContext, Font });
   const output = '/private/tmp/unicom-flow-preview'; fs.mkdirSync(output,{recursive:true});
   const visualAt = Date.now();
@@ -303,7 +305,7 @@ function distributionFixture() {
   const environment = { UNICOM_FLOW_TEST:true, config:{runsInWidget:true,runsInApp:false,widgetFamily:'medium'},
     args:{widgetParameter:'',queryParameters:{}}, importModule:name=>{assert.equal(name,'DmYY');return dependency;},
     FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, module:{filename:'/documents/联通流量.js'},
-    Font:{...Font,boldSystemFont:size=>({size}),systemFont:size=>({size})}, Device:{screenSize:()=>({width:390,height:844})},
+    Font:Object.assign(class extends Font {},Font,{boldSystemFont:size=>({size})}), Device:{screenSize:()=>({width:390,height:844})},
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
@@ -371,6 +373,19 @@ function distributionFixture() {
   instance.settings.flowBarColor='#ABCDEF';
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
+  const fontMenu=instance._menuActions.flatMap(group=>group.menu).find(item=>item.val==='numberFont');
+  assert.equal(fontMenu.options.length,5);
+  for(const [label,family] of [['Menlo','Menlo-Regular'],['Helvetica Neue','HelveticaNeue'],['Avenir Next 窄体','AvenirNextCondensed-Regular'],['系统等宽','Menlo,monospace'],['系统默认','sans-serif'],['未知旧设置','sans-serif']]) {
+    instance.settings.numberFont=label; const fontWidget=await instance.renderSmall();
+    assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}"`));
+    assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}" font-weight="400" font-size="22"`));
+  }
+  unavailableFont=true; instance.settings.numberFont='Menlo';
+  const fallbackFontWidget=await instance.renderSmall();
+  assert.ok(fallbackFontWidget.backgroundImage.includes('font-family="sans-serif" font-weight="400" font-size="22"'));
+  unavailableFont=false;
+  instance.settings.numberFont='系统默认';
+
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));
   files.delete('/documents/UnicomFlow/history.json'); dataPayload=cardFixture;
   alertChoices.push(1); await instance.showMembers();

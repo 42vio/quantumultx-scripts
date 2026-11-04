@@ -30,8 +30,8 @@ const UF = {
   form: 'language=chinese',
   refreshMinutes: 30,
   folder: 'UnicomFlow',
-  usageFont: 'SF Mono Regular', totalFont: 'SF Mono Regular',
-  usageFontSize: 22, totalFontSize: 10,
+  usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
+  usageFontSize: 25, totalFontSize: 11,
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
@@ -46,9 +46,9 @@ const UF_NUMBER_FONTS = {
   'Menlo Regular': 'Menlo-Regular',
 };
 
-function normalizedNumberFont(value) {
+function normalizedNumberFont(value, fallback = 'SF Mono Regular') {
   if (Object.prototype.hasOwnProperty.call(UF_NUMBER_FONTS, value)) return value;
-  return value === 'Menlo' ? 'Menlo Regular' : 'SF Mono Regular';
+  return value === 'Menlo' ? 'Menlo Regular' : fallback;
 }
 
 function normalizedFontSize(value, kind) {
@@ -798,24 +798,15 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   text(ctx, title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
   const primary = formatMB(metric && metric.used);
   const textX = x + 10, textWidth = width - 10;
-  const parts = primary.match(/^(.*?)(MB|GB)$/);
-  if (parts) {
-    const gap = 2;
-    const base = UF.usageFontSize, unitBase = base * 0.55;
-    const scale = Math.min(1, textWidth / (numberWidth(parts[1], base, 'usage') + gap + numberWidth(parts[2], unitBase, 'usage')));
-    const size = base * scale;
-    // 数字顶边固定，字号调大时仍留在标题与总量之间；超宽时只缩小本行。
-    const drawSize = Math.min(size, 28), drawUnit = drawSize * 0.55;
-    const unitX = textX + numberWidth(parts[1], drawSize, 'usage') + gap * scale;
-    text(ctx, parts[1], textX, y + 15, unitX - textX, 30, drawSize, UF.text, 'number');
-    text(ctx, parts[2], unitX, y + 18, Math.max(1, textX + textWidth - unitX), 22, drawUnit, UF.text, 'number');
-  } else {
-    text(ctx, primary, textX, y + 15, textWidth, 29, Math.min(UF.usageFontSize, 28), UF.text, 'number');
-  }
+  // 数字与单位共用字体、字重和字号，使用一个空格分隔；整行超宽时同步缩小。
+  const usageText = primary.replace(/(MB|GB)$/, ' $1');
+  const usageSize = Math.min(UF.usageFontSize, textWidth / Math.max(1, numberWidth(usageText, 1, 'usage')));
+  text(ctx, usageText, textX, y + 14, textWidth, 30, usageSize, UF.text, 'number');
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
+  detail = detail.replace(/(\d)(MB|GB)/g, '$1 $2');
   const detailSize = Math.min(UF.totalFontSize, textWidth / Math.max(1, numberWidth(detail, 1, 'total')));
-  text(ctx, detail, textX, y + 43, textWidth, 17, detailSize, metric ? UF.muted : UF.warning, 'total');
+  text(ctx, detail, textX, y + 44, textWidth, 16, detailSize, metric ? UF.muted : UF.warning, 'total');
   const barY = y + 18, barH = 37, barW = 5;
   // 小圆角矩形：横纵圆角相同，短彩条也保留平直边缘。
   const bar = (top, height, color) => roundedRect(ctx, x, top, barW, height, Math.min(barW, height) / 4, color);
@@ -1029,8 +1020,19 @@ function createWidgetClass(DmYY) {
       let changed = false;
       for (const kind of ['usage', 'total']) {
         const key = kind + 'Font';
-        const font = normalizedNumberFont(this.settings[key] || this.settings.numberFont);
+        const font = normalizedNumberFont(this.settings[key] || this.settings.numberFont, UF_DEFAULTS[key]);
         if (this.settings[key] !== font) { this.settings[key] = font; changed = true; }
+      }
+      // 只迁移上一版完整默认组合；用户已改过任一项时保留整组选择。
+      if (!this.settings.mediumTypographyDefaultsApplied) {
+        const previousDefault = this.settings.usageFont === 'SF Mono Regular' && this.settings.totalFont === 'SF Mono Regular'
+          && (this.settings.usageFontSize == null || String(this.settings.usageFontSize) === '22')
+          && (this.settings.totalFontSize == null || String(this.settings.totalFontSize) === '10');
+        if (previousDefault) {
+          for (const key of ['usageFont', 'totalFont', 'usageFontSize', 'totalFontSize']) this.settings[key] = String(UF_DEFAULTS[key]);
+        }
+        this.settings.mediumTypographyDefaultsApplied = true;
+        changed = true;
       }
       if (changed) this.saveSettings(false);
       this.name = '联通流量';
@@ -1052,7 +1054,7 @@ function createWidgetClass(DmYY) {
       this.settings.refreshAfterDate = String(UF.refreshMinutes);
       applyTheme(this.settings);
       for (const kind of ['usage', 'total']) {
-        UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font']);
+        UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
         UF[kind + 'FontSize'] = normalizedFontSize(this.settings[kind + 'FontSize'], kind);
       }
       UF.displayMode = this.settings.displayMode === '主副卡分开显示' ? '主副卡分开显示' : '统一显示';

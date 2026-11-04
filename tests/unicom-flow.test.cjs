@@ -670,8 +670,27 @@ function distributionFixture() {
     assert.equal(menu[0].val,kind+'Font');
     assert.equal(menu[0].options.join(','),'系统 Regular,系统 Medium,SF Mono Regular,SF Mono Medium,Menlo Regular');
     assert.equal(menu[1].val,kind+'FontSize');
-    assert.equal(menu[1].defaultValue,kind==='usage'?'22':'10');
+    assert.equal(menu[1].defaultValue,kind==='usage'?'25':'11');
   }
+  assert.equal(instance.settings.usageFont,'SF Mono Medium');
+  assert.equal(instance.settings.totalFont,'系统 Medium');
+  for (const family of ['small','medium']) {
+    const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
+    assert.match(w.backgroundImage, /y="51"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="25">2.3 GB<\/text>/);
+    assert.match(w.backgroundImage, /y="67"[^>]*font-family="sans-serif" font-weight="500" font-size="11">27 GB/);
+  }
+  const presetInstance=settings=>{
+    class PresetDmYY extends MockDmYY {constructor(arg){super(arg);this.settings={...settings};}}
+    return new (appApi.createWidgetClass(PresetDmYY))('');
+  };
+  const migratedDefault=presetInstance({usageFont:'SF Mono Regular',totalFont:'SF Mono Regular',usageFontSize:'22',totalFontSize:'10'});
+  assert.equal(migratedDefault.settings.usageFont,'SF Mono Medium');assert.equal(migratedDefault.settings.totalFont,'系统 Medium');
+  assert.equal(migratedDefault.settings.usageFontSize,'25');assert.equal(migratedDefault.settings.totalFontSize,'11');
+  const custom={usageFont:'Menlo Regular',totalFont:'系统 Regular',usageFontSize:'23',totalFontSize:'12'};
+  const preserved=presetInstance(custom);
+  for(const key of Object.keys(custom)) assert.equal(preserved.settings[key],custom[key]);
+  const once=presetInstance({usageFont:'SF Mono Regular',totalFont:'SF Mono Regular',usageFontSize:'22',totalFontSize:'10',mediumTypographyDefaultsApplied:true});
+  assert.equal(once.settings.usageFont,'SF Mono Regular');assert.equal(once.settings.usageFontSize,'22');
   fontSizeInput='25.5';await typography.options[0].menu[1].onClick();
   assert.equal(instance.settings.usageFontSize,'25.5');
   for(const invalid of ['', 'abc', '29', '0']) {
@@ -690,16 +709,16 @@ function distributionFixture() {
       for(const family of ['small','medium']) {
         const fontWidget=family==='small'?await instance.renderSmall():await instance.renderMedium();
         const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="([^"]+)" font-weight="([0-9]+)"[^>]*>([^<]+)<\/text>/g)].filter(m=>m[1]===fontFamily && Number(m[2])===weight).map(m=>m[3]);
-        assert.ok(numericTexts.includes('GB'));
+        assert.ok(numericTexts.some(value=>value.endsWith(' GB')));
         assert.ok(numericTexts.some(value=>value.includes('%')));
       }
     }
   }
-  for(const [oldFont,expected] of [['SF Mono Semibold（半粗体）','SF Mono Regular'],['系统等宽','SF Mono Regular'],[undefined,'SF Mono Regular'],['未知字体','SF Mono Regular'],['Menlo','Menlo Regular'],['Menlo Regular','Menlo Regular']]) {
+  for(const [oldFont,expected] of [['SF Mono Semibold（半粗体）','SF Mono Regular'],['系统等宽','SF Mono Regular'],[undefined,null],['未知字体',null],['Menlo','Menlo Regular'],['Menlo Regular','Menlo Regular']]) {
     class LegacyFontDmYY extends MockDmYY {constructor(arg){super(arg);this.settings.numberFont=oldFont;}}
     const LegacyFontWidget=appApi.createWidgetClass(LegacyFontDmYY);
     const migratedFont=new LegacyFontWidget('');
-    assert.equal(migratedFont.settings.usageFont,expected);assert.equal(migratedFont.settings.totalFont,expected);
+    assert.equal(migratedFont.settings.usageFont,expected==='SF Mono Regular'||expected==null?'SF Mono Medium':expected);assert.equal(migratedFont.settings.totalFont,expected==='SF Mono Regular'||expected==null?'系统 Medium':expected);
   }
   unavailableFont=true; instance.settings.usageFont='Menlo Regular';instance.settings.totalFont='Menlo Regular';
   const fallbackFontWidget=await instance.renderSmall();
@@ -710,9 +729,9 @@ function distributionFixture() {
   instance.settings.usageFontSize='24';instance.settings.totalFontSize='11.5';
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3<\/text>/);
-    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27GB \(9%\)<\/text>/);
-    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27GB \(9%\)<\/text>/g)];
+    assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3 GB<\/text>/);
+    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27 GB \(9%\)<\/text>/);
+    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3 GB<\/text>|<text x="([0-9.]+)"[^>]*>27 GB \(9%\)<\/text>/g)];
     assert.equal(rows.length,2);assert.equal(rows[0][1],rows[1][2]);
   }
   // 过宽数字缩小后单位仍在卡片安全区；非法字号回退默认。
@@ -720,8 +739,8 @@ function distributionFixture() {
   instance.settings.usageFontSize='NaN';instance.settings.totalFontSize='999';
   const invalidSize=await instance.renderSmall();
   assert.ok(!invalidSize.backgroundImage.includes('NaN'));
-  assert.match(invalidSize.backgroundImage,/font-size="22">2.3<\/text>/);
-  assert.match(invalidSize.backgroundImage,/font-size="10">27GB/);
+  assert.match(invalidSize.backgroundImage,/font-size="25">2.3 GB<\/text>/);
+  assert.match(invalidSize.backgroundImage,/font-size="11">27 GB/);
   instance.settings.usageFontSize='22';instance.settings.totalFontSize='10';
 
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));

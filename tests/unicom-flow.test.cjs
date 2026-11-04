@@ -379,11 +379,11 @@ function distributionFixture() {
   class DrawContext {
     constructor() { this.parts=[]; }
     setFillColor(c) { this.fill=c.hex; } setTextColor(c) { this.text=c.hex; }
-    setFont(f) { this.font=f; } setTextAlignedLeft() {this.centered=false;} setTextAlignedCenter() {this.centered=true;}
+    setFont(f) { this.font=f; } setTextAlignedLeft() {this.centered=false;this.right=false;} setTextAlignedCenter() {this.centered=true;this.right=false;} setTextAlignedRight() {this.centered=false;this.right=true;}
     fillRect(r) { this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${this.fill}"/>`); }
     addPath(p) { this.path=p; }
     fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" ry="${this.path.ry}" fill="${this.fill}"/>`); }
-    drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.name || (this.font.mono?'Menlo,monospace':'sans-serif')}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
+    drawTextInRect(t,r) { this.parts.push(`<text x="${this.right?r.x+r.width:this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.right?'end':this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.name || (this.font.mono?'Menlo,monospace':'sans-serif')}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
     getImage() { assert.ok(this.parts.length); return `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width*3}" height="${this.size.height*3}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="card"><rect width="100%" height="100%" rx="20"/></clipPath></defs><g clip-path="url(#card)">${this.parts.join('')}</g></svg>`; }
   }
   let unavailableFont=false;
@@ -433,9 +433,11 @@ function distributionFixture() {
   const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
-  const footerLegend=aligned.match(/<text x="186" y="([0-9.]+)"[^>]*>主 [^<]+<\/text>/);
+  // 两行今日图例在图表右上角，文字右端与图表边界一致。
+  const dailyLegends=[...aligned.matchAll(/<text x="325" y="([0-9.]+)" text-anchor="end"[^>]*>[主副] [^<]+<\/text>/g)];
+  assert.equal(dailyLegends.length,2);assert.equal(Number(dailyLegends[0][1]),90.5);assert.equal(Number(dailyLegends[1][1]),100.5);
   const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>更新 [^<]+<\/text>/);
-  assert.ok(footerLegend);assert.ok(footerTime);assert.equal(footerLegend[1],footerTime[1]);
+  assert.ok(footerTime);assert.equal(Number(footerTime[1]),146.5);
   const step=(338-26)/24;
   for(const hour of [0,6,12,18,23]) {
     const expected=13+(hour+0.5)*step;

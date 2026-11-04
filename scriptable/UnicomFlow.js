@@ -755,7 +755,7 @@ function numberFont(size) {
 function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false, medium = false) {
   ctx.setTextColor(new Color(color));
   ctx.setFont(mono === 'number' ? numberFont(size) : mono ? Font.regularMonospacedSystemFont(size) : medium ? Font.mediumSystemFont(size) : Font.systemFont(size));
-  if (centered) ctx.setTextAlignedCenter(); else ctx.setTextAlignedLeft();
+  if (centered === 'right') ctx.setTextAlignedRight(); else if (centered) ctx.setTextAlignedCenter(); else ctx.setTextAlignedLeft();
   ctx.drawTextInRect(value, new Rect(x, y, width, height));
 }
 
@@ -827,7 +827,7 @@ function renderImage(result, medium, width, height) {
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
     text(ctx, '今日用量',
-      chartX, 90, chartW, 12, 8, UF.muted);
+      chartX, 90, chartW - 80, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
       const barWidth = Math.max(1, cell - 3);
@@ -864,19 +864,21 @@ function renderImage(result, medium, width, height) {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - (medium ? 152 : 4), 9, 6.5,
+  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = height - 18, legendX = width - pad - 144;
+    const legendY = 84, legendX = width - pad - 70;
     const sampled = buckets.some(b => b.samples);
     const unknown = buckets.reduce((sum, b) => sum + b.unknownMB, 0);
     [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].forEach(([color, name, key], index) => {
       const used = buckets.reduce((sum, b) => sum + b[key], 0);
       // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
       const value = sampled && (used > 0 || unknown === 0) ? formatMB(used) : '—';
-      const x = legendX + index * 74;
-      roundedRect(ctx, x, legendY + 3, 2.5, 2.5, 1.25, color);
-      text(ctx, name + ' ' + value, x + 5, legendY, 65, 9, 6.5, UF.muted);
+      const y = legendY + index * 10, caption = name + ' ' + value;
+      // 右对齐文字，圆点随内容宽度靠近文字，避免两者之间留下整块空白。
+      const captionWidth = Math.min(65, Array.from(caption).reduce((sum, c) => sum + 6.5 * (c.charCodeAt(0) > 255 ? 1 : c === ' ' ? 0.3 : 0.6), 0));
+      roundedRect(ctx, width - pad - captionWidth - 5, y + 3, 2.5, 2.5, 1.25, color);
+      text(ctx, caption, legendX + 5, y, 65, 9, 6.5, UF.muted, false, 'right');
     });
     // 使用文字颜色绘制图标，点击区域另由透明布局提供。
     text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);

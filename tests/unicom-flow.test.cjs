@@ -219,19 +219,19 @@ function distributionFixture() {
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
   assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.02GB'));
-  const compositionBar=aligned.match(/x="20" y="70" width="([0-9.]+)" height="3" fill=/);
-  assert.ok(compositionBar); assert.ok(Math.abs(Number(compositionBar[1])-139*1.2/120)<1e-8);
-  const sharedSegments=[...aligned.matchAll(/<rect x="([0-9.]+)" y="70" width="([0-9.]+)" height="3" fill="#[^"]+"/g)].filter(m=>Number(m[1])<159);
+  const sharedSegments=[...aligned.matchAll(/<rect x="20" y="([0-9.]+)" width="5" height="([0-9.]+)" fill="#[^"]+"/g)];
   assert.equal(sharedSegments.length,2);
-  assert.ok(Math.abs(Number(sharedSegments[1][2])-139*2.02/120)<1e-8);
-  assert.ok(Math.abs(Number(sharedSegments[0][2])+Number(sharedSegments[1][2])-139*3.22/120)<1e-8);
-  // 超额也不绘制到边界外；零用量和不限量没有虚构进度。
-  for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false]]) {
+  assert.ok(Math.abs(Number(sharedSegments[0][2])-37*1.2/120)<1e-8);
+  assert.ok(Math.abs(Number(sharedSegments[1][2])-37*2.02/120)<1e-8);
+  assert.ok(Math.abs(Number(sharedSegments[0][1])+Number(sharedSegments[0][2])-71)<1e-8);
+  assert.ok(Math.abs(Number(sharedSegments[1][1])+Number(sharedSegments[1][2])-Number(sharedSegments[0][1]))<1e-8);
+  // 超额不超出轨道；零用量、不限量以及不完整的成员数据不绘制虚假进度。
+  for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false],[12,120,4,7,false]]) {
     const edgeData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,used,total,members:[{id:'a',role:'主卡',used:main},{id:'b',role:'副卡',used:vice}]}:p),members:[]};
     const edgeSvg=visual.renderImage({history:{...history,data:edgeData},stale:false},true,338,158);
-    const bars=[...edgeSvg.matchAll(/<rect x="([0-9.]+)" y="70" width="([0-9.]+)" height="3" fill="#[^"]+"/g)].filter(m=>Number(m[1])<159);
+    const bars=[...edgeSvg.matchAll(/<rect x="20" y="([0-9.]+)" width="5" height="([0-9.]+)" fill="#[^"]+"/g)];
     assert.equal(bars.length,colored?2:0);
-    for(const bar of bars) assert.ok(Number(bar[1])+Number(bar[2])<=159+1e-8);
+    for(const bar of bars) { assert.ok(Number(bar[1])>=34-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=71+1e-8); }
   }
 
   const step=(338-40)/24;

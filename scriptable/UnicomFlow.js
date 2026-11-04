@@ -538,22 +538,23 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   text(ctx, title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
   const primary = formatMB(metric && metric.used);
   const base = compact ? 22 : 25;
-  const size = Math.min(base, width / Math.max(1, primary.length * 0.62));
-  text(ctx, primary, x, y + 14, width, 29, size, UF.text, 'number');
+  const textX = x + 10, textWidth = width - 10;
+  const size = Math.min(base, textWidth / Math.max(1, primary.length * 0.62));
+  text(ctx, primary, textX, y + 15, textWidth, 29, size, UF.text, 'number');
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
-  const detailSize = Math.min(compact ? 10 : 11, width / Math.max(1, detail.length * 0.7));
-  text(ctx, detail, x, y + 40, width, 13, detailSize, metric ? UF.muted : UF.warning, 'number');
-  const barY = y + 54, barH = 3;
-  roundedRect(ctx, x, barY, width, barH, 1.5, UF.track);
+  const detailSize = Math.min(compact ? 10 : 11, textWidth / Math.max(1, detail.length * 0.7));
+  text(ctx, detail, textX, y + 43, textWidth, 13, detailSize, metric ? UF.muted : UF.warning, 'number');
+  const barY = y + 18, barH = 37, barW = 5;
+  roundedRect(ctx, x, barY, barW, barH, 2.5, UF.track);
   if (metric && metric.composition) {
     const c = metric.composition;
-    // 彩条按套餐总量分别表示主副卡已用量，未用部分保留灰色。超额时按已用构成缩放至条宽。
+    // 彩条按套餐总量分别表示主副卡已用量，未用部分保留灰色。自底部向上增长，超额时按已用构成缩放至条高。
     if (c.complete && metric.used > 0 && metric.total > 0) {
-      const scale = width / Math.max(metric.total, c.main + c.vice);
-      const mainWidth = c.main * scale, viceWidth = c.vice * scale;
-      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, barY, mainWidth, barH)); }
-      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + mainWidth, barY, viceWidth, barH)); }
+      const scale = barH / Math.max(metric.total, c.main + c.vice);
+      const mainHeight = c.main * scale, viceHeight = c.vice * scale;
+      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, barY + barH - mainHeight, barW, mainHeight)); }
+      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x, barY + barH - mainHeight - viceHeight, barW, viceHeight)); }
     }
     const half = width / 2;
     roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
@@ -562,7 +563,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
     text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
   } else if (metric && metric.total > 0) {
     const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
-    roundedRect(ctx, x, barY, width * ratio, barH, 1.5, UF.blue);
+    roundedRect(ctx, x, barY + barH * (1 - ratio), barW, barH * ratio, 2.5, UF.blue);
   }
 }
 

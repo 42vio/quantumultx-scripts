@@ -392,8 +392,31 @@ function snapshotSignature(packages) {
     .map(p => [p.id, p.category, p.shared == null ? null : p.shared, p.total]).sort((a, b) => a[0].localeCompare(b[0])));
 }
 
+// 每个套餐分别核对逐卡累计值；未知部分不从共享池倒推。
+function cardDelta(previous, sample) {
+  let mainMB = 0, viceMB = 0, unknownMB = 0;
+  for (const p of sample.packages.filter(p => p.category !== 'ignore')) {
+    const before = previous.packages.find(item => item.id === p.id);
+    const delta = p.used - before.used;
+    if (p.category === 'general' && p.shared === false) { mainMB += delta; continue; }
+    const a = sharedComposition([before], previous.members || []), b = sharedComposition([p], sample.members || []);
+    const main = b.main - a.main, vice = b.vice - a.vice;
+    if (a.complete && b.complete && main >= 0 && vice >= 0 && Math.abs(main + vice - delta) <= 0.05 && (main + vice > 0 || delta === 0)) {
+      const factor = main + vice > 0 ? delta / (main + vice) : 0;
+      mainMB += main * factor; viceMB += vice * factor;
+    } else unknownMB += delta;
+  }
+  return { mainMB, viceMB, unknownMB };
+}
+
+function eventParts(event) {
+  const parts = [event.mainMB, event.viceMB, event.unknownMB];
+  return parts.every(value => Number.isFinite(value) && value >= 0) && Math.abs(parts.reduce((a, b) => a + b, 0) - event.mb) <= 1e-6
+    ? { mainMB: parts[0], viceMB: parts[1], unknownMB: parts[2] } : { mainMB: 0, viceMB: 0, unknownMB: event.mb };
+}
+
 // 月度仅保存按日聚合；小时图仍使用短期区间记录，不累积秒级明细。
-function updateMonths(previous, sample, prev, interval, note, legacyEvents = []) {
+function updateMonths(previous, sample, prev, interval, note) {
   const months = JSON.parse(JSON.stringify(previous || {}));
   const now = new Date(sample.at);
   const oldest = dayKey(new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()).slice(0, 7);
@@ -403,7 +426,7 @@ function updateMonths(previous, sample, prev, interval, note, legacyEvents = [])
     const key = dayKey(time), month = key.slice(0, 7);
     if (month < oldest || month > current) return null;
     if (!months[month]) months[month] = { days: {}, crossDay: [] };
-    if (!months[month].days[key]) months[month].days[key] = { mb: 0, intervals: 0, first: null, last: null, notes: [] };
+    if (!months[month].days[key]) months[month].days[key] = { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0, intervals: 0, first: null, last: null, notes: [] };
     return months[month].days[key];
   };
   const touch = time => {
@@ -416,10 +439,11 @@ function updateMonths(previous, sample, prev, interval, note, legacyEvents = [])
       || !Number.isFinite(event.mb) || event.mb < 0) return;
     touch(event.from); touch(event.at);
     if (dayKey(event.from) === dayKey(event.at)) {
-      const d = day(event.at); if (d) { d.mb += event.mb; d.intervals++; }
+      const d = day(event.at); if (d) { d.mb += event.mb; d.intervals++;
+        for (const [key, value] of Object.entries(eventParts(event))) d[key] += value; }
     } else {
       const month = months[dayKey(event.at).slice(0, 7)];
-      if (month) month.crossDay.push({ from: event.from, at: event.at, mb: event.mb });
+      if (month) month.crossDay.push({ from: event.from, at: event.at, mb: event.mb, ...eventParts(event) });
       const start = new Date(event.from); start.setHours(0, 0, 0, 0);
       // 跨日区间只能确认总量，不能分配到各日，也不平均插值。
       for (let i = 0; i < 63 && start.getTime() <= event.at; i++, start.setDate(start.getDate() + 1)) {
@@ -428,7 +452,6 @@ function updateMonths(previous, sample, prev, interval, note, legacyEvents = [])
       }
     }
   };
-  if (!previous) for (const event of legacyEvents) record(event);
   if (prev) touch(prev.at);
   touch(sample.at);
   if (interval) record(interval);
@@ -442,12 +465,13 @@ function updateMonths(previous, sample, prev, interval, note, legacyEvents = [])
 
 function monthlyReport(history, at = Date.now()) {
   const date = new Date(at), month = dayKey(at).slice(0, 7), today = dayKey(at);
-  const savedMonths = history.months || updateMonths(null, history.data, null, null, '', history.events || []);
+  const savedMonths = history.months || {};
   const saved = savedMonths[month] || { days: {}, crossDay: [] };
   const count = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
   const days = Array.from({ length: count }, (_, index) => {
     const key = `${month}-${String(index + 1).padStart(2, '0')}`, d = saved.days[key];
     return { key, day: index + 1, future: key > today, mb: d && d.intervals ? d.mb : null,
+      mainMB: d && d.intervals ? d.mainMB : null, viceMB: d && d.intervals ? d.viceMB : null, unknownMB: d && d.intervals ? d.unknownMB : null,
       intervals: d ? d.intervals : 0, first: d ? d.first : null, last: d ? d.last : null, notes: d ? d.notes : [] };
   });
   const crossDay = (saved.crossDay || []).filter(e => Number.isFinite(e.mb) && e.mb >= 0);
@@ -461,11 +485,11 @@ function monthlyHTML(report, stale = false) {
   return `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     :root{color-scheme:${UF.bg === 'FFFFFF' ? 'light' : 'dark'}}*{box-sizing:border-box}body{margin:0;padding:24px 18px;background:#${UF.bg};color:#${UF.text};font:15px -apple-system,sans-serif}
     h1{font-size:25px;margin:0 0 8px}h2{font-size:18px}.muted{color:#${UF.muted};line-height:1.7}strong{font-size:27px;font-weight:500}.panel{padding:18px 0;border-bottom:1px solid #${UF.track}}
-    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple}}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
+    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple};display:flex;flex-direction:column-reverse;overflow:hidden}.segment{display:block;width:100%}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
     table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
     </style></head><body><h1 id="title">本月用量</h1><div class="muted">采样估算 · 非运营商日账单${stale ? ' · 当前为缓存' : ''}</div>
     <section class="panel"><div class="muted">已记录的同日区间用量</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
-    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">紫色：已采样；灰色短柱：无数据。短柱仅作占位，用量以数值为准。</p></section>
+    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">蓝：主卡；紫：副卡；黄：归属未确认。灰色短柱：无数据；零值为紫色短柱，均以数值为准。</p></section>
     <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><table><thead><tr><th>日期</th><th>区间估算</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table>
     <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；跨月、套餐变化和计数回退时重新建立基线，已有日记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
     <p id="updated" class="muted"></p><script>
@@ -474,20 +498,20 @@ function monthlyHTML(report, stale = false) {
     const amount=mb=>mb==null?'—':mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(2)+' MB';
     const clock=t=>t==null?'无':new Date(t).toLocaleTimeString('zh-CN',{hour12:false});
     const state=d=>d.future?'未到日期':d.notes.length?'有缺口':d.mb!=null?'采样区间':d.first!=null?'仅基线':'无采样';
-    const select=d=>{byId('selected').textContent=d.key;byId('detail').textContent='区间估算：'+amount(d.mb)+'\\n有效区间：'+d.intervals+' 段\\n成功采样范围：'+clock(d.first)+' — '+clock(d.last)+'\\n'+(d.notes.join('；')||'仅代表已记录区间，未采样时段不补零');document.querySelectorAll('.bar').forEach(b=>b.classList.toggle('selected',b.dataset.key===d.key));};
+    const select=d=>{byId('selected').textContent=d.key;byId('detail').textContent='区间估算：'+amount(d.mb)+'\\n主卡：'+amount(d.mainMB)+'　副卡：'+amount(d.viceMB)+'\\n归属未确认：'+amount(d.unknownMB)+'\\n有效区间：'+d.intervals+' 段\\n成功采样范围：'+clock(d.first)+' — '+clock(d.last)+'\\n'+(d.notes.join('；')||'仅代表已记录区间，未采样时段不补零');document.querySelectorAll('.bar').forEach(b=>b.classList.toggle('selected',b.dataset.key===d.key));};
     byId('title').textContent=report.month+' 本月用量';byId('total').textContent=amount(report.totalMB);
     byId('coverage').textContent='有同日区间记录 '+report.days.filter(d=>d.mb!=null).length+' 天；其余日期未补零。';
     byId('unallocated').textContent='跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
     const max=Math.max(1,...report.days.map(d=>d.mb||0));
-    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*110))+'px';const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
+    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*110))+'px';if(d.mb>0){fill.style.background='transparent';for(const [value,color] of [[d.mainMB,'#${UF.blue}'],[d.viceMB,'#${UF.purple}'],[d.unknownMB,'#${UF.warning}']]){if(value>0){const segment=document.createElement('span');segment.className='segment';segment.style.height=(value/d.mb*100)+'%';segment.style.background=color;fill.append(segment);}}}const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
     const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=d.key.slice(5);button.onclick=()=>select(d);date.append(button);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,value,status);byId('rows').append(tr);}
-    for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb);byId('cross').append(p);}
+    for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb)+'（主 '+amount(e.mainMB)+' / 副 '+amount(e.viceMB)+' / 未确认 '+amount(e.unknownMB)+'）';byId('cross').append(p);}
     byId('updated').textContent='最后成功查询：'+new Date(report.lastSuccess).toLocaleString('zh-CN',{hour12:false});select(report.days.find(d=>d.key===report.today)||report.days[0]);
     </script></body></html>`;
 }
 
 function updateHistory(previous, sample) {
-  const old = previous && previous.version === 1 && previous.session === sample.session ? previous : {};
+  const old = previous && previous.version === 1 && previous.cardHistoryVersion === 1 && previous.session === sample.session ? previous : {};
   let events = Array.isArray(old.events) ? old.events.filter(e =>
     Number.isFinite(e.at) && e.at <= sample.at && e.at >= sample.at - 7 * 86400000) : [];
   const prev = old.last;
@@ -504,23 +528,24 @@ function updateHistory(previous, sample) {
       delta += p.used - before;
     }
     if (valid) {
-      interval = { from: prev.at, at: sample.at, mb: delta };
+      interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample) };
       // 跨午夜的区间不能归为“今日”用量；不拆分或插值。
-      if (dayKey(prev.at) === dayKey(sample.at)) events.push({ from: prev.at, at: sample.at, mb: delta });
+      if (dayKey(prev.at) === dayKey(sample.at)) events.push(interval);
       note = '今日区间增量 · 按采样时刻';
     } else { events = []; note = '计数回退，重新积累'; }
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
-  const months = updateMonths(old.months, sample, prev, interval, note, old.events || []);
-  return { version: 1, session: sample.session, events, months, note,
-    last: { at: sample.at, signature, packages: sample.packages }, data: sample };
+  const months = updateMonths(old.months, sample, prev, interval, note);
+  return { version: 1, cardHistoryVersion: 1, session: sample.session, events, months, note,
+    last: { at: sample.at, signature, packages: sample.packages, members: (sample.members || []).map(m => ({ id: m.id, role: m.role, roleConflict: m.roleConflict })) }, data: sample };
 }
 
 function todayBuckets(history, at) {
-  const buckets = Array.from({ length: 24 }, () => ({ mb: 0, samples: 0 }));
+  const buckets = Array.from({ length: 24 }, () => ({ mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0, samples: 0 }));
   for (const event of history.events || []) {
     if (dayKey(event.at) !== dayKey(at) || dayKey(event.from) !== dayKey(at)) continue;
     const bucket = buckets[new Date(event.at).getHours()];
     bucket.mb += event.mb;
+    for (const [key, value] of Object.entries(eventParts(event))) bucket[key] += value;
     bucket.samples++;
   }
   return buckets;
@@ -682,7 +707,7 @@ function renderImage(result, medium, width, height) {
     const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
-    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '今日区间用量 · 采样小时' : result.history.note,
+    text(ctx, buckets.some(b => b.samples) ? metrics.perMember ? '套餐池区间用量 · 采样小时' : '区间用量 · 蓝主 / 紫副 / 黄未分' : result.history.note,
       chartX, 90, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
@@ -692,8 +717,13 @@ function renderImage(result, medium, width, height) {
       if (hour > currentHour) return;
       if (bucket.mb > 0) {
         const h = Math.max(minimumBar, bucket.mb / max * chartH);
-        ctx.setFillColor(new Color(UF.purple));
-        ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - h, barWidth, h));
+        let bottom = chartY + chartH;
+        for (const [value, color] of [[bucket.mainMB, UF.blue], [bucket.viceMB, UF.purple], [bucket.unknownMB, UF.warning]]) {
+          if (value <= 0) continue;
+          const height = h * value / bucket.mb;
+          bottom -= height; ctx.setFillColor(new Color(color));
+          ctx.fillRect(new Rect(center - barWidth / 2, bottom, barWidth, height));
+        }
       } else if (bucket.samples || hour < currentHour) {
         // 灰色是缺少采样的占位，不计入用量；紫色短柱表示真实零增量。
         ctx.setFillColor(new Color(bucket.samples ? UF.purple : UF.track));
@@ -856,7 +886,7 @@ function createWidgetClass(DmYY) {
       catch (error) {
         this.failure = error.message || '查询失败';
         const old = this.store.read('history', null);
-        if (old && old.version === 1 && old.data) this.result = { history: old, stale: true, error: this.failure };
+        if (old && old.version === 1 && old.cardHistoryVersion === 1 && old.data) this.result = { history: old, stale: true, error: this.failure };
       }
       return this.result;
     }

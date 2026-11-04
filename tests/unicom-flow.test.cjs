@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {cardDelta, monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -183,6 +183,40 @@ function distributionFixture() {
   const nextMonth = new Date(2026, 11, 1, 1).getTime();
   assert.equal(updateHistory(h, sample(nextMonth, 20)).events.length, 0);
 
+  // 逐卡增量必须按每个套餐核对；主卡包含独享包，副卡仅计明确返回的共享用量。
+  const cardSample=(time,main,vice,own,roles=true)=>{
+    const raw=distributionFixture();
+    raw.resources[0].details[0].use=main+vice;
+    raw.resources[0].details[0].remain=120*1024-main-vice;
+    raw.resources[0].details[0].viceCardlist=[{number:'13000000001',use:main},{number:'13000000002',use:vice}];
+    if(roles)raw.viceCardLits=[{number:'13000000001',role:'main'},{number:'13000000002',role:'vice'}];
+    raw.unshared[0].details[0].use=own;raw.unshared[0].details[0].remain=80*1024-own;
+    return {...parsePackages(raw),session:'cards',at:time};
+  };
+  const cardStart=updateHistory(null,cardSample(at,100,200,300));
+  const cardNext=updateHistory(cardStart,cardSample(at+3600000,110,230,350));
+  assert.equal(cardNext.events[0].mb,90);assert.equal(cardNext.events[0].mainMB,60);
+  assert.equal(cardNext.events[0].viceMB,30);assert.equal(cardNext.events[0].unknownMB,0);
+  const retainedCards=updateHistory(cardNext,cardSample(at+7200000,120,240,360));
+  assert.equal(retainedCards.events.length,2);assert.equal(retainedCards.events[0].mb,90);
+  assert.equal(retainedCards.events[1].mainMB,20);assert.equal(retainedCards.events[1].viceMB,10);
+
+  const cardBuckets=todayBuckets(cardNext,at);
+  assert.equal(cardBuckets[11].mainMB,60);assert.equal(cardBuckets[11].viceMB,30);
+  const cardMonth=api.monthlyReport(cardNext,at);
+  assert.equal(cardMonth.days[2].mainMB,60);assert.equal(cardMonth.days[2].viceMB,30);
+  const unknownCard=updateHistory(cardStart,cardSample(at+3600000,110,230,350,false));
+  assert.equal(unknownCard.events[0].mainMB,50);assert.equal(unknownCard.events[0].unknownMB,40);
+  const memberRollback=updateHistory(cardStart,cardSample(at+3600000,90,250,350));
+  assert.equal(memberRollback.events[0].mainMB,50);assert.equal(memberRollback.events[0].unknownMB,40);
+  const cardCross=updateHistory(cardNext,cardSample(midnight,120,240,360));
+  const crossParts=api.monthlyReport(cardCross,midnight).crossDay[0];
+  assert.equal(crossParts.mainMB,20);assert.equal(crossParts.viceMB,10);
+  const oldHistory={...cardNext,version:1,cardHistoryVersion:undefined};
+  const wipedHistory=updateHistory(oldHistory,cardSample(at+7200000,130,250,370));
+  assert.equal(wipedHistory.events.length,0);assert.equal(api.monthlyReport(wipedHistory,at).totalMB,null);
+  assert.equal(wipedHistory.cardHistoryVersion,1);
+
   // 日聚合与小时图相互独立：未知日期不补零，真实零增量仍有记录。
   const firstMonthly=api.monthlyReport(updateHistory(null,sample(at)),at);
   assert.equal(firstMonthly.days[2].mb,null);
@@ -209,10 +243,10 @@ function distributionFixture() {
   assert.equal(monthReport.totalMB,10);assert.ok(monthReport.days[3].notes.some(n=>n.includes('回退')));
   const changed=updateHistory(zero,sample(midnight+7200000,22,1024));
   assert.equal(api.monthlyReport(changed,midnight).totalMB,10);
-  const legacy={...monthHistory};delete legacy.months;
+  const legacy={...monthHistory};delete legacy.months;delete legacy.cardHistoryVersion;
   const imported=updateHistory(legacy,sample(at+7200000,7));
-  assert.equal(api.monthlyReport(imported,at).totalMB,14);
-  assert.equal(api.monthlyReport(updateHistory(imported,sample(at+10800000,8)),at).totalMB,16);
+  assert.equal(api.monthlyReport(imported,at).totalMB,null);
+  assert.equal(api.monthlyReport(updateHistory(imported,sample(at+10800000,8)),at).totalMB,2);
   const separated=updateHistory(monthHistory,{...sample(at+7200000,7),session:'new-user'});
   assert.equal(api.monthlyReport(separated,at).totalMB,null);
   const afterSevenDays=updateHistory(monthHistory,sample(at+10*86400000,100));
@@ -226,8 +260,8 @@ function distributionFixture() {
   assert.equal(api.monthlyReport(januaryHistory,january).days.length,31);
   const leap=new Date(2028,1,2,12).getTime();
   assert.equal(api.monthlyReport(updateHistory(null,sample(leap)),leap).days.length,29);
-  // 旧版缓存可离线显示过去保留的同日记录。
-  assert.equal(api.monthlyReport(legacy,at).totalMB,10);
+  // 旧版统计已获准删除，不显示或导入旧日记录。
+  assert.equal(api.monthlyReport(legacy,at).totalMB,null);
 
   // 执行月度页实际脚本，确认日期点击、零值、缺失值和明细渲染。
   class Element {
@@ -256,7 +290,15 @@ function distributionFixture() {
   api.applyTheme({theme:'白色'});assert.ok(api.monthlyHTML(monthReport).includes('color-scheme:light'));
   api.applyTheme({theme:'黑色'});
 
-  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',html);
+  elements.clear();
+  const cardsHTML=api.monthlyHTML(api.monthlyReport(cardCross,midnight));
+  new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  const stackedMonth=elements.get('chart').children[2].children[0].children;
+  assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
+  assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
+  elements.get('chart').children[2].onclick();assert.ok(elements.get('detail').textContent.includes('主卡：60.00 MB'));assert.ok(elements.get('detail').textContent.includes('副卡：30.00 MB'));
+
+  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);
 
   // 真正的原生绘图代码在 mock 中执行，将相同绘图指令输出为 SVG 供视觉检查。
   const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -285,7 +327,7 @@ function distributionFixture() {
   const previewData=parsePackages(previewFixture);
   const history = updateHistory(null, { ...previewData, at: visualAt, session:'preview' });
   history.events = [8,12,16,17,18,19,20].filter(hour => hour <= new Date().getHours()).map((hour,i)=>({
-    from:new Date(new Date().setHours(hour,0,0,0)).getTime(), at:new Date(new Date().setHours(hour,30,0,0)).getTime(), mb:[30,85,40,260,240,280,150][i] }));
+    from:new Date(new Date().setHours(hour,0,0,0)).getTime(), at:new Date(new Date().setHours(hour,30,0,0)).getTime(), mb:[30,85,40,260,240,280,150][i],mainMB:[30,85,40,260,240,280,150][i]*0.6,viceMB:[30,85,40,260,240,280,150][i]*0.4,unknownMB:0 }));
   for (const [name,medium,width,height] of [['small',false,158,158],['medium',true,338,158]]) {
     fs.writeFileSync(`${output}/${name}.svg`,visual.renderImage({history,stale:false},medium,width,height));
     fs.writeFileSync(`${output}/${name}-empty.svg`,visual.renderImage({history:{...history,events:[],data:{...base,categories:{general:base.categories.general,directed:null},at:visualAt}},stale:true},medium,width,height));
@@ -332,6 +374,12 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158);
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
+
+  const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
+  const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
+  const hour10x=13+(10+0.5)*13-5;
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23*60/90}" width="10" height="${23*60/90}" fill="#0A94FF"`));
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23}" width="10" height="${23*30/90}" fill="#8A73FF"`));
 
   // 小号在不同手机尺寸下使用相同的安全留白，始终显示查询时间与刷新入口。
   for (const side of [141,158,170]) {
@@ -486,6 +534,10 @@ function distributionFixture() {
   assert.ok(menus.some(item=>item.title==='脚本更新'));
   const configPage=await instance.renderAppView(instance._menuActions);
   assert.equal(configPage.avatar,false);
+  const historyFile='/documents/UnicomFlow/history.json';
+  const oldCached=JSON.parse(files.get(historyFile));delete oldCached.cardHistoryVersion;files.set(historyFile,JSON.stringify(oldCached));
+  apiError=true;await instance.loadResult();assert.equal(instance.result,null);
+  apiError=false;await instance.loadResult();assert.equal(instance.result.history.events.length,0);assert.equal(JSON.parse(files.get(historyFile)).cardHistoryVersion,1);
   const basic=await instance.basicSettings();
   assert.ok(basic.options[0].menu.some(item=>item.val==='flowBoxjsDomain'));
   const colors=await instance.colorSettings();
@@ -558,5 +610,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧记录迁移/两个月保留/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/两个月保留/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

@@ -319,6 +319,9 @@ function distributionFixture() {
   assert.ok(html.includes('>今日</button>'));assert.ok(html.includes('>月度趋势</button>'));
   let prevented=false;listeners.get('dblclick')({preventDefault:()=>{prevented=true;}});assert.equal(prevented,true);
 
+  assert.equal(elements.get('axis-max').textContent,'10 MB');
+  elements.get('tab-hours').onclick();assert.equal(elements.get('axis-max').hidden,true);
+  elements.get('tab-month').onclick();
   const monthBars=elements.get('chart').children;
   assert.equal(monthBars[0].children[0].style.height,'4px');assert.ok(monthBars[0].children[0].className.includes('missing'));
   assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
@@ -328,7 +331,7 @@ function distributionFixture() {
   elements.get('rows').children[2].children[0].children[0].onclick();assert.equal(elements.get('selected').textContent,'2026-11-03');
   elements.get('tab-hours').onclick();assert.equal(elements.get('chart').children.length,24);assert.equal(elements.get('rows').children.length,24);
   assert.equal(elements.get('tab-hours').attributes['aria-pressed'],'true');assert.equal(elements.get('tab-month').attributes['aria-pressed'],'false');
-  elements.get('tab-year').onclick();assert.equal(elements.get('chart').children.length,12);assert.equal(elements.get('rows').children.length,12);assert.equal(elements.get('chart').style.minWidth,'0px');
+  elements.get('tab-year').onclick();assert.equal(elements.get('chart').children.length,12);assert.equal(elements.get('rows').children.length,12);assert.equal(elements.get('chart').style.minWidth,'360px');
   elements.get('tab-month').onclick();assert.equal(elements.get('chart').children.length,30); // 未重复追加旧节点
   const malicious=api.statisticsHTML({month:{...monthReport,today:'</script><img src=x>'}});
   assert.equal((malicious.match(/<\/script>/g)||[]).length,1);assert.ok(!html.includes('13000000001'));assert.ok(html.includes('缓存数据'));assert.ok(html.includes('<meta charset="utf-8">'));
@@ -340,6 +343,8 @@ function distributionFixture() {
 
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入本月合计'));
+  assert.equal(elements.get('axis-max').textContent,'90 MB');assert.equal(elements.get('axis-max').hidden,false);
+  assert.equal(elements.get('chart').children[2].children[0].style.height,'140px');
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
@@ -355,6 +360,7 @@ function distributionFixture() {
   const averagedReports=api.statisticsReports(averageHistory,midnight);
   const averageHTML=api.statisticsHTML(averagedReports,false,'year');
   new vm.Script(averageHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('axis-max').textContent,'300 MB');
   assert.equal(elements.get('total').textContent,'150.00 MB');assert.equal(elements.get('main-total').textContent,'100.00 MB');assert.equal(elements.get('vice-total').textContent,'50.00 MB');
   assert.ok(elements.get('coverage').textContent.includes('2 个已结束月份'));assert.ok(elements.get('coverage').textContent.includes('1 个部分记录月'));
   assert.equal(elements.get('rows').children[11].children[5].textContent,'本月进行中');

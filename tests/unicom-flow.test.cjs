@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {cardDelta, monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {yearlyReport, cardDelta, monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -256,12 +256,25 @@ function distributionFixture() {
   assert.equal(api.monthlyReport(december,nextMonth).totalMB,null);
   const january=new Date(2027,0,1,12).getTime();
   const januaryHistory=updateHistory(december,sample(january,0));
-  assert.equal(januaryHistory.months['2026-11'],undefined);assert.ok(januaryHistory.months['2026-12']);
+  assert.ok(januaryHistory.months['2026-11']);assert.ok(januaryHistory.months['2026-12']);
   assert.equal(api.monthlyReport(januaryHistory,january).days.length,31);
   const leap=new Date(2028,1,2,12).getTime();
   assert.equal(api.monthlyReport(updateHistory(null,sample(leap)),leap).days.length,29);
   // 旧版统计已获准删除，不显示或导入旧日记录。
   assert.equal(api.monthlyReport(legacy,at).totalMB,null);
+
+  const yearCards=api.yearlyReport(cardCross,midnight);
+  assert.equal(yearCards.days.length,12);assert.equal(yearCards.days[0].key,'2025-12');assert.equal(yearCards.days[11].key,'2026-11');
+  assert.equal(yearCards.days[11].mainMB,80);assert.equal(yearCards.days[11].viceMB,40);
+  assert.equal(yearCards.days[11].mb,120);assert.equal(yearCards.totalMB,120); // 90 同日 + 30 同月跨日，只计一次
+  assert.equal(yearCards.days[0].mb,null);
+  const zeroYear=api.yearlyReport(updateHistory(updateHistory(null,sample(at)),sample(at+3600000)),at);
+  assert.equal(zeroYear.days[11].mb,0);assert.equal(zeroYear.totalMB,0);
+  const nextNovember=new Date(2027,10,1,12).getTime();
+  const boundaryHistory=updateHistory(januaryHistory,sample(nextNovember));
+  assert.equal(boundaryHistory.months['2026-11'],undefined);assert.ok(boundaryHistory.months['2026-12']);
+  const yearBoundary=api.yearlyReport(boundaryHistory,nextNovember);
+  assert.equal(yearBoundary.days[0].key,'2026-12');assert.equal(yearBoundary.days[11].key,'2027-11');
 
   // 执行月度页实际脚本，确认日期点击、零值、缺失值和明细渲染。
   class Element {
@@ -298,7 +311,22 @@ function distributionFixture() {
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
   elements.get('chart').children[2].onclick();assert.ok(elements.get('detail').textContent.includes('主卡：60.00 MB'));assert.ok(elements.get('detail').textContent.includes('副卡：30.00 MB'));
 
-  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);
+  const dailyRow=elements.get('rows').children[2].children;
+  assert.equal(dailyRow.length,6);assert.equal(dailyRow[1].textContent,'60.00 MB');assert.equal(dailyRow[2].textContent,'30.00 MB');assert.equal(dailyRow[4].textContent,'90.00 MB');
+  elements.clear();
+  const yearHTML=api.monthlyHTML(yearCards);
+  assert.ok(yearHTML.includes('<meta charset="utf-8">'));assert.ok(yearHTML.includes('min-width:0px'));
+
+  new vm.Script(yearHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('chart').children.length,12);assert.equal(elements.get('rows').children.length,12);
+  assert.equal(elements.get('title').textContent,'近12个月（含本月）');
+  assert.equal(elements.get('rows').children[11].children[1].textContent,'80.00 MB');
+  assert.equal(elements.get('rows').children[11].children[2].textContent,'40.00 MB');
+  const yearSegments=elements.get('chart').children[11].children[0].children;
+  assert.equal(yearSegments.length,2);assert.equal(yearSegments[0].style.background,'#0A94FF');
+  elements.get('chart').children[0].onclick();assert.ok(elements.get('detail').textContent.includes('主卡：—'));
+
+  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',yearHTML);
 
   // 真正的原生绘图代码在 mock 中执行，将相同绘图指令输出为 SVG 供视觉检查。
   const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -519,6 +547,10 @@ function distributionFixture() {
   assert.ok(menus.some(item=>item.title==='显示方式' && item.options.join(',')==='统一显示,主副卡分开显示'));
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
   assert.ok(menus.some(item=>item.title==='本月用量'));
+  assert.ok(menus.some(item=>item.title==='近12个月'));
+  await instance.showYearlyUsage();assert.ok(feedback.at(-1).html.includes('近12个月（含本月）'));
+  apiError=true;await instance.showYearlyUsage();assert.ok(feedback.at(-1).html.includes('当前为缓存'));apiError=false;
+
   const queriesBeforeMonthly=requestCount;
   await instance.showMonthlyUsage();
   assert.equal(requestCount,queriesBeforeMonthly+2);
@@ -610,5 +642,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/两个月保留/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/年度汇总/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

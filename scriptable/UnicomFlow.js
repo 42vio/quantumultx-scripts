@@ -419,7 +419,7 @@ function eventParts(event) {
 function updateMonths(previous, sample, prev, interval, note) {
   const months = JSON.parse(JSON.stringify(previous || {}));
   const now = new Date(sample.at);
-  const oldest = dayKey(new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()).slice(0, 7);
+  const oldest = dayKey(new Date(now.getFullYear(), now.getMonth() - 11, 1).getTime()).slice(0, 7);
   const current = dayKey(sample.at).slice(0, 7);
   for (const key of Object.keys(months)) if (key < oldest || key > current) delete months[key];
   const day = time => {
@@ -479,32 +479,60 @@ function monthlyReport(history, at = Date.now()) {
     crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
 }
 
+function yearlyReport(history, at = Date.now()) {
+  const now = new Date(at), current = dayKey(at).slice(0, 7);
+  const days = Array.from({ length: 12 }, (_, index) => {
+    const key = dayKey(new Date(now.getFullYear(), now.getMonth() - 11 + index, 1).getTime()).slice(0, 7);
+    const saved = history.months && history.months[key];
+    const daily = Object.values(saved && saved.days || {});
+    // 同月跨日区间无法拆到某一天，但可以准确归入该月，只计一次。
+    const cross = (saved && saved.crossDay || []).filter(e => dayKey(e.from).slice(0, 7) === key && dayKey(e.at).slice(0, 7) === key);
+    const records = [...daily.filter(d => d.intervals > 0), ...cross];
+    const parts = records.reduce((total, e) => {
+      total.mb += e.mb;
+      for (const [name, value] of Object.entries(eventParts(e))) total[name] += value;
+      return total;
+    }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
+    const first = daily.map(d => d.first).filter(Number.isFinite), last = daily.map(d => d.last).filter(Number.isFinite);
+    return { key, day: key.slice(5) + '月', future: false,
+      mb: records.length ? parts.mb : null, mainMB: records.length ? parts.mainMB : null,
+      viceMB: records.length ? parts.viceMB : null, unknownMB: records.length ? parts.unknownMB : null,
+      intervals: daily.reduce((sum, d) => sum + d.intervals, 0) + cross.length,
+      first: first.length ? Math.min(...first) : null, last: last.length ? Math.max(...last) : null,
+      notes: [...new Set(daily.flatMap(d => d.notes).filter(note => note !== '跨日区间未分配'))] };
+  });
+  return { period: 'months', month: current, today: current, days,
+    totalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
+    crossDay: [], unallocatedMB: 0, lastSuccess: history.data.at };
+}
+
 function monthlyHTML(report, stale = false) {
   // 数据仅有日期、区间与用量；不把账号号码、原始响应或 Cookie 传入页面。
   const payload = JSON.stringify(report).replace(/</g, '\\u003c');
-  return `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     :root{color-scheme:${UF.bg === 'FFFFFF' ? 'light' : 'dark'}}*{box-sizing:border-box}body{margin:0;padding:24px 18px;background:#${UF.bg};color:#${UF.text};font:15px -apple-system,sans-serif}
     h1{font-size:25px;margin:0 0 8px}h2{font-size:18px}.muted{color:#${UF.muted};line-height:1.7}strong{font-size:27px;font-weight:500}.panel{padding:18px 0;border-bottom:1px solid #${UF.track}}
-    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple};display:flex;flex-direction:column-reverse;overflow:hidden}.segment{display:block;width:100%}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
-    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
+    .scroll{overflow-x:auto;max-width:100%}.chart{display:flex;align-items:stretch;gap:4px;min-width:${report.period === 'months' ? 0 : 620}px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple};display:flex;flex-direction:column-reverse;overflow:hidden}.segment{display:block;width:100%}.missing{background:#${UF.track}}.future{background:transparent}.day{font-size:10px;color:#${UF.muted}}
+    table{width:100%;min-width:600px;border-collapse:collapse}td{white-space:nowrap}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
     </style></head><body><h1 id="title">本月用量</h1><div class="muted">采样估算 · 非运营商日账单${stale ? ' · 当前为缓存' : ''}</div>
-    <section class="panel"><div class="muted">已记录的同日区间用量</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
-    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">蓝：主卡；紫：副卡；黄：归属未确认。灰色短柱：无数据；零值为紫色短柱，均以数值为准。</p></section>
-    <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><table><thead><tr><th>日期</th><th>区间估算</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table>
-    <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；跨月、套餐变化和计数回退时重新建立基线，已有日记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
+    <section class="panel"><div class="muted">${report.period === 'months' ? '已记录的月用量（含同月跨日区间）' : '已记录的同日区间用量'}</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
+    <section class="panel"><div class="muted">点击柱子或${report.period === 'months' ? '月份' : '日期'}查看明细；宽表可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div><p class="muted">蓝：主卡；紫：副卡；黄：归属未确认。灰色短柱：无数据；零值为紫色短柱，均以数值为准。</p></section>
+    <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><div class="scroll"><table><thead><tr><th>${report.period === 'months' ? '月份' : '日期'}</th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；月度汇总可将同月跨日区间计入对应月份；跨月缺口不推算。跨月、套餐变化和计数回退时重新建立基线，已有记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
     <p id="updated" class="muted"></p><script>
     const report=${payload};
+    const annual=report.period==='months';
     const byId=id=>document.getElementById(id);
     const amount=mb=>mb==null?'—':mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(2)+' MB';
-    const clock=t=>t==null?'无':new Date(t).toLocaleTimeString('zh-CN',{hour12:false});
+    const clock=t=>t==null?'无':annual?new Date(t).toLocaleString('zh-CN',{hour12:false}):new Date(t).toLocaleTimeString('zh-CN',{hour12:false});
     const state=d=>d.future?'未到日期':d.notes.length?'有缺口':d.mb!=null?'采样区间':d.first!=null?'仅基线':'无采样';
     const select=d=>{byId('selected').textContent=d.key;byId('detail').textContent='区间估算：'+amount(d.mb)+'\\n主卡：'+amount(d.mainMB)+'　副卡：'+amount(d.viceMB)+'\\n归属未确认：'+amount(d.unknownMB)+'\\n有效区间：'+d.intervals+' 段\\n成功采样范围：'+clock(d.first)+' — '+clock(d.last)+'\\n'+(d.notes.join('；')||'仅代表已记录区间，未采样时段不补零');document.querySelectorAll('.bar').forEach(b=>b.classList.toggle('selected',b.dataset.key===d.key));};
-    byId('title').textContent=report.month+' 本月用量';byId('total').textContent=amount(report.totalMB);
-    byId('coverage').textContent='有同日区间记录 '+report.days.filter(d=>d.mb!=null).length+' 天；其余日期未补零。';
-    byId('unallocated').textContent='跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
+    byId('title').textContent=annual?'近12个月（含本月）':report.month+' 本月用量';byId('total').textContent=amount(report.totalMB);
+    byId('coverage').textContent=(annual?'有用量记录 ':'有同日区间记录 ')+report.days.filter(d=>d.mb!=null).length+(annual?' 个月；无数据月份未补零。':' 天；其余日期未补零。');
+    byId('unallocated').textContent=annual?'同月跨日区间已并入所属月份；跨月缺口未推算。':'跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
     const max=Math.max(1,...report.days.map(d=>d.mb||0));
     for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*110))+'px';if(d.mb>0){fill.style.background='transparent';for(const [value,color] of [[d.mainMB,'#${UF.blue}'],[d.viceMB,'#${UF.purple}'],[d.unknownMB,'#${UF.warning}']]){if(value>0){const segment=document.createElement('span');segment.className='segment';segment.style.height=(value/d.mb*100)+'%';segment.style.background=color;fill.append(segment);}}}const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
-    const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=d.key.slice(5);button.onclick=()=>select(d);date.append(button);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,value,status);byId('rows').append(tr);}
+    const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=annual?d.key:d.key.slice(5);button.onclick=()=>select(d);date.append(button);const main=document.createElement('td');main.textContent=amount(d.mainMB);main.style.color='#${UF.blue}';const vice=document.createElement('td');vice.textContent=amount(d.viceMB);vice.style.color='#${UF.purple}';const unknown=document.createElement('td');unknown.textContent=amount(d.unknownMB);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,main,vice,unknown,value,status);byId('rows').append(tr);}
     for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb)+'（主 '+amount(e.mainMB)+' / 副 '+amount(e.viceMB)+' / 未确认 '+amount(e.unknownMB)+'）';byId('cross').append(p);}
     byId('updated').textContent='最后成功查询：'+new Date(report.lastSuccess).toLocaleString('zh-CN',{hour12:false});select(report.days.find(d=>d.key===report.today)||report.days[0]);
     </script></body></html>`;
@@ -956,6 +984,14 @@ function createWidgetClass(DmYY) {
       await view.present();
     }
 
+    async showYearlyUsage() {
+      await this.loadResult();
+      if (!this.result) return alertMessage('近12个月', this.failure || '请先成功查询一次套餐');
+      const view = new WebView();
+      await view.loadHTML(monthlyHTML(yearlyReport(this.result.history), this.result.stale));
+      await view.present();
+    }
+
     async memberDiagnostics() {
       await this.loadResult();
       const report = this.result && this.result.history.data.memberReport;
@@ -972,7 +1008,7 @@ function createWidgetClass(DmYY) {
     }
 
     async clearHistory() {
-      const confirm = new Alert(); confirm.title = '清除历史？'; confirm.message = '清除本组件的快照、小时图及本月／上月日记录；QX Cookie 保留。';
+      const confirm = new Alert(); confirm.title = '清除历史？'; confirm.message = '清除本组件的快照、小时图及近12个月日记录；QX Cookie 保留。';
       confirm.addDestructiveAction('清除'); confirm.addCancelAction('取消');
       if (await confirm.presentAlert() === 0) { this.store.clear(); this.result = null; }
     }
@@ -1024,6 +1060,7 @@ function createWidgetClass(DmYY) {
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
         action('flowMonthly', '本月用量', 'chart.bar.xaxis', '#8A73FF', () => this.showMonthlyUsage()),
+        action('flowYearly', '近12个月', 'calendar', '#007AFF', () => this.showYearlyUsage()),
         action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
         action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
         action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),
@@ -1041,7 +1078,7 @@ function createWidgetClass(DmYY) {
 async function refreshWithFeedback(instance, medium) {
   const view = new WebView();
   // 先展示触发状态再请求，不把加载文字当作新的成功查询时间。
-  await view.loadHTML(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  await view.loadHTML(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     body{margin:0;padding:32px 22px;background:#${UF.bg};color:#${UF.text};font:16px -apple-system,sans-serif;text-align:center}
     #spin{margin:28px auto;width:22px;height:22px;border:3px solid #8885;border-top-color:#${UF.blue};border-radius:50%;animation:turn .7s linear infinite}
     @keyframes turn{to{transform:rotate(360deg)}}h2{font-size:21px}p{line-height:1.6;color:#${UF.muted}}

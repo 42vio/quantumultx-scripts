@@ -413,7 +413,7 @@ function distributionFixture() {
   for(const rect of quotaRects){assert.equal(rect[2],rect[3]);assert.ok(Math.abs(Number(rect[2])-Math.min(5,Number(rect[1]))/4)<1e-8);}
   assert.ok(Math.abs(Number(sharedSegments[0][2])-37*1.2/120)<1e-8);
   assert.ok(Math.abs(Number(sharedSegments[1][2])-37*2.02/120)<1e-8);
-  assert.ok(Math.abs(Number(sharedSegments[0][1])+Number(sharedSegments[0][2])-71)<1e-8);
+  assert.ok(Math.abs(Number(sharedSegments[0][1])+Number(sharedSegments[0][2])-67)<1e-8);
   assert.ok(Math.abs(Number(sharedSegments[1][1])+Number(sharedSegments[1][2])-Number(sharedSegments[0][1]))<1e-8);
   // 超额不超出轨道；零用量、不限量以及不完整的成员数据不绘制虚假进度。
   for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false],[12,120,4,7,false]]) {
@@ -421,7 +421,7 @@ function distributionFixture() {
     const edgeSvg=visual.renderImage({history:{...history,data:edgeData},stale:false},true,338,158);
     const bars=[...edgeSvg.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
     assert.equal(bars.length,colored?2:0);
-    for(const bar of bars) { assert.ok(Number(bar[1])>=34-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=71+1e-8); }
+    for(const bar of bars) { assert.ok(Number(bar[1])>=30-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=67+1e-8); }
   }
 
   const viceOnlyData={...previewData,at:visualAt,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};

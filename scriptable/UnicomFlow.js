@@ -820,8 +820,8 @@ function renderImage(result, medium, width, height) {
   const metrics = displayMetrics(data, UF.displayMode);
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 16, col, false);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 16, col, false);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false);
     const buckets = todayBuckets(result.history, Date.now());
     const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));

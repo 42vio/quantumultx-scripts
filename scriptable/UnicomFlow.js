@@ -792,9 +792,17 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   }
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')}(${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
-  detail = detail.replace(/(\d)(MB|GB)/g, '$1 $2');
-  const detailSize = Math.min(UF.totalFontSize, textWidth / Math.max(1, numberWidth(detail, 1, 'total')));
-  text(ctx, detail, textX, y + 44, textWidth, 16, detailSize, metric ? UF.muted : UF.warning, 'total');
+  const totalParts = detail.match(/^(\d+(?:\.\d+)?)(MB|GB)(.*)$/);
+  if (totalParts) {
+    const gap = 2;
+    const size = Math.min(UF.totalFontSize, (textWidth - gap) / Math.max(1, numberWidth(detail, 1, 'total')));
+    const unitX = textX + numberWidth(totalParts[1], size, 'total') + gap;
+    text(ctx, totalParts[1], textX, y + 44, unitX - textX, 16, size, UF.muted, 'total');
+    text(ctx, totalParts[2] + totalParts[3], unitX, y + 44, Math.max(1, textX + textWidth - unitX), 16, size, UF.muted, 'total');
+  } else {
+    const detailSize = Math.min(UF.totalFontSize, textWidth / Math.max(1, numberWidth(detail, 1, 'total')));
+    text(ctx, detail, textX, y + 44, textWidth, 16, detailSize, metric ? UF.muted : UF.warning, 'total');
+  }
   const barY = y + 18, barH = 37, barW = 5;
   // 小圆角矩形：横纵圆角相同，短彩条也保留平直边缘。
   const bar = (top, height, color) => roundedRect(ctx, x, top, barW, height, Math.min(barW, height) / 4, color);

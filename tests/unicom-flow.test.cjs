@@ -672,7 +672,11 @@ function distributionFixture() {
   for (const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
     assert.match(w.backgroundImage, /y="51"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="25">2.3<\/text>/);
-    assert.match(w.backgroundImage, /y="67"[^>]*font-family="sans-serif" font-weight="500" font-size="11">27 GB/);
+    assert.match(w.backgroundImage, /y="67"[^>]*font-family="sans-serif" font-weight="500" font-size="11">27<\/text>/);
+    const totals=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*font-family="sans-serif" font-weight="500" font-size="11">([^<]+)<\/text>/g)];
+    const totalNumber=totals.find(row=>row[3]==='27'), totalUnit=totals.find(row=>row[3]==='GB(9%)');
+    assert.ok(totalNumber && totalUnit);assert.equal(totalNumber[2],totalUnit[2]);
+    assert.ok(Math.abs(Number(totalUnit[1])-Number(totalNumber[1])-2*11*0.66-2)<1e-8);
     const runs=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="([0-9.]+)">([^<]+)<\/text>/g)];
     const number=runs.find(row=>row[4]==='2.3'), unit=runs.find(row=>row[4]==='GB');
     assert.ok(number && unit);assert.equal(number[2],unit[2]);assert.equal(number[3],unit[3]);
@@ -732,8 +736,8 @@ function distributionFixture() {
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
     assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3<\/text>/);
-    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27 GB\(9%\)<\/text>/);
-    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27 GB\(9%\)<\/text>/g)];
+    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27<\/text>/);
+    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27<\/text>/g)];
     assert.equal(rows.length,2);assert.equal(rows[0][1],rows[1][2]);
   }
   // 过宽数字缩小后单位仍在卡片安全区；非法字号回退默认。
@@ -742,7 +746,7 @@ function distributionFixture() {
   const invalidSize=await instance.renderSmall();
   assert.ok(!invalidSize.backgroundImage.includes('NaN'));
   assert.match(invalidSize.backgroundImage,/font-size="25">2.3<\/text>/);
-  assert.match(invalidSize.backgroundImage,/font-size="11">27 GB/);
+  assert.match(invalidSize.backgroundImage,/font-size="11">27<\/text>/);
   instance.settings.usageFontSize='22';instance.settings.totalFontSize='10';
 
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));

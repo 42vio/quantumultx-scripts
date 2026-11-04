@@ -30,7 +30,7 @@ const UF = {
   form: 'language=chinese',
   refreshMinutes: 30,
   folder: 'UnicomFlow',
-  numberFont: '系统默认',
+  numberFont: 'SF Mono Regular',
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
@@ -38,15 +38,13 @@ const UF_DEFAULTS = { ...UF };
 
 // 仅保留便于阅读数字的系统字体，不下载外部字体。
 const UF_NUMBER_FONTS = {
-  '系统默认': null,
-  'SF Pro Light（细体）': 'system-light',
-  'SF Pro Regular（常规）': 'system-regular',
-  '系统等宽': 'system-mono',
-  'SF Mono Medium（中等）': 'system-mono-medium',
-  'Menlo': 'Menlo-Regular',
-  'Helvetica Neue': 'HelveticaNeue',
-  'Avenir Next 窄体': 'AvenirNextCondensed-Regular',
+  'SF Mono Regular': 'system-mono',
+  'Menlo Regular': 'Menlo-Regular',
 };
+
+function normalizedNumberFont(value) {
+  return value === 'Menlo' || value === 'Menlo Regular' ? 'Menlo Regular' : 'SF Mono Regular';
+}
 
 const UF_THEMES = {
   黑色: { bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B' },
@@ -511,16 +509,11 @@ async function refresh(store) {
 
 // ---- 所有布局均由 Scriptable 原生绘图生成 ----
 function numberFont(size) {
-  const name = UF_NUMBER_FONTS[UF.numberFont];
-  if (name === 'system-light') return Font.lightSystemFont(size);
-  if (name === 'system-regular') return Font.regularSystemFont(size);
-  if (name === 'system-mono-medium') return Font.mediumMonospacedSystemFont(size);
-  if (name === 'system-mono') return Font.regularMonospacedSystemFont(size);
-  if (name) {
-    try { return new Font(name, size) || Font.systemFont(size); }
-    catch (_) { return Font.systemFont(size); }
+  if (normalizedNumberFont(UF.numberFont) === 'Menlo Regular') {
+    try { return new Font('Menlo-Regular', size) || Font.regularMonospacedSystemFont(size); }
+    catch (_) { return Font.regularMonospacedSystemFont(size); }
   }
-  return Font.systemFont(size);
+  return Font.regularMonospacedSystemFont(size);
 }
 
 function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false, medium = false) {
@@ -730,8 +723,9 @@ function createWidgetClass(DmYY) {
   return class UnicomFlowWidget extends DmYY {
     constructor(arg) {
       super(arg);
-      if (this.settings.numberFont === 'SF Mono Semibold（半粗体）') {
-        this.settings.numberFont = 'SF Mono Medium（中等）';
+      const font = normalizedNumberFont(this.settings.numberFont);
+      if (this.settings.numberFont !== font) {
+        this.settings.numberFont = font;
         this.saveSettings(false);
       }
       this.name = '联通流量';
@@ -752,7 +746,7 @@ function createWidgetClass(DmYY) {
       UF.refreshMinutes = Number.isFinite(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : UF_DEFAULTS.refreshMinutes;
       this.settings.refreshAfterDate = String(UF.refreshMinutes);
       applyTheme(this.settings);
-      UF.numberFont = Object.keys(UF_NUMBER_FONTS).includes(this.settings.numberFont) ? this.settings.numberFont : '系统默认';
+      UF.numberFont = normalizedNumberFont(this.settings.numberFont);
       UF.displayMode = this.settings.displayMode === '主副卡分开显示' ? '主副卡分开显示' : '统一显示';
     }
 
@@ -881,7 +875,7 @@ function createWidgetClass(DmYY) {
         action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
         { name: 'displayMode', val: 'displayMode', title: '显示方式', type: 'select', options: ['统一显示', '主副卡分开显示'], defaultValue: '统一显示', icon: { name: 'person.2.fill', color: '#5856D6' } },
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
-        { name: 'numberFont', val: 'numberFont', title: '数字字体', type: 'select', options: Object.keys(UF_NUMBER_FONTS), defaultValue: '系统默认', icon: { name: 'textformat', color: '#007AFF' } },
+        { name: 'numberFont', val: 'numberFont', title: '数字字体', type: 'select', options: Object.keys(UF_NUMBER_FONTS), defaultValue: 'SF Mono Regular', icon: { name: 'textformat', color: '#007AFF' } },
         action('flowCategories', '套餐分类', 'list.bullet', '#007AFF', async () => {
           await this.loadResult();
           if (!this.result) return alertMessage('暂无明细', this.failure);

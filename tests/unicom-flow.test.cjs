@@ -401,39 +401,30 @@ function distributionFixture() {
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
   const fontMenu=instance._menuActions.flatMap(group=>group.menu).find(item=>item.val==='numberFont');
-  assert.equal(fontMenu.options.length,8);
-  for(const [label,family] of [['Menlo','Menlo-Regular'],['Helvetica Neue','HelveticaNeue'],['Avenir Next 窄体','AvenirNextCondensed-Regular'],['系统等宽','Menlo,monospace'],['系统默认','sans-serif'],['未知旧设置','sans-serif']]) {
-    instance.settings.numberFont=label; const fontWidget=await instance.renderSmall();
-    assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}"`));
-    assert.ok(fontWidget.backgroundImage.includes(`font-family="${family}" font-weight="400" font-size="22"`));
+  assert.equal(fontMenu.options.join(','),'SF Mono Regular,Menlo Regular');
+  for(const theme of ['黑色','白色']) {
+    instance.settings.theme=theme;
+    for(const [label,fontFamily] of [['SF Mono Regular','Menlo,monospace'],['Menlo Regular','Menlo-Regular']]) {
+      instance.settings.numberFont=label;
+      for(const family of ['small','medium']) {
+        const fontWidget=family==='small'?await instance.renderSmall():await instance.renderMedium();
+        const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="([^"]+)" font-weight="400"[^>]*>([^<]+)<\/text>/g)].filter(m=>m[1]===fontFamily).map(m=>m[2]);
+        assert.ok(numericTexts.some(value=>value.endsWith('GB')));
+        assert.ok(numericTexts.some(value=>value.includes('%')));
+      }
+    }
   }
-  for(const [label,weight] of [['SF Pro Light（细体）',300],['SF Pro Regular（常规）',400]]) {
-    instance.settings.numberFont=label;
-    const sfWidget=await instance.renderSmall();
-    assert.ok(sfWidget.backgroundImage.includes(`font-weight="${weight}" font-size="22"`));
-    assert.ok(sfWidget.backgroundImage.includes(`font-weight="${weight}" font-size="10"`));
+  for(const [oldFont,expected] of [['SF Mono Semibold（半粗体）','SF Mono Regular'],['SF Mono Medium（中等）','SF Mono Regular'],['系统等宽','SF Mono Regular'],['SF Pro Light（细体）','SF Mono Regular'],[undefined,'SF Mono Regular'],['未知字体','SF Mono Regular'],['Menlo','Menlo Regular'],['Menlo Regular','Menlo Regular']]) {
+    class LegacyFontDmYY extends MockDmYY {constructor(arg){super(arg);this.settings.numberFont=oldFont;}}
+    const LegacyFontWidget=appApi.createWidgetClass(LegacyFontDmYY);
+    const migratedFont=new LegacyFontWidget('');
+    assert.equal(migratedFont.settings.numberFont,expected);
   }
-  assert.ok(fontMenu.options.includes('SF Mono Medium（中等）'));
-  instance.settings.numberFont='SF Mono Medium（中等）';
-  for(const family of ['small','medium']) {
-    const fontWidget=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    const numericTexts=[...fontWidget.backgroundImage.matchAll(/<text[^>]*font-family="Menlo,monospace" font-weight="500"[^>]*>([^<]+)<\/text>/g)].map(m=>m[1]);
-    assert.ok(numericTexts.some(value=>value.endsWith('GB')));
-    assert.ok(numericTexts.some(value=>value.includes('%')));
-  }
-  class LegacyFontDmYY extends MockDmYY {
-    constructor(arg){super(arg);this.settings.numberFont='SF Mono Semibold（半粗体）';}
-  }
-  const LegacyFontWidget=appApi.createWidgetClass(LegacyFontDmYY);
-  const migratedFont=new LegacyFontWidget('');
-  assert.equal(migratedFont.settings.numberFont,'SF Mono Medium（中等）');
-  const migratedPreview=await migratedFont.renderSmall();
-  assert.ok(migratedPreview.backgroundImage.includes('font-family="Menlo,monospace" font-weight="500"'));
-  unavailableFont=true; instance.settings.numberFont='Menlo';
+  unavailableFont=true; instance.settings.numberFont='Menlo Regular';
   const fallbackFontWidget=await instance.renderSmall();
-  assert.ok(fallbackFontWidget.backgroundImage.includes('font-family="sans-serif" font-weight="400" font-size="22"'));
+  assert.ok(fallbackFontWidget.backgroundImage.includes('font-family="Menlo,monospace" font-weight="400" font-size="22"'));
   unavailableFont=false;
-  instance.settings.numberFont='系统默认';
+  instance.settings.numberFont='SF Mono Regular';
 
   assert.ok(!JSON.stringify(instance.settings).includes('FAKE_TEST_ONLY'));
   files.delete('/documents/UnicomFlow/history.json'); dataPayload=cardFixture;

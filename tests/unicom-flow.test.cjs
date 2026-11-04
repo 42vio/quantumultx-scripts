@@ -245,7 +245,7 @@ function distributionFixture() {
   // 小号在不同手机尺寸下使用相同的安全留白，始终显示查询时间与刷新入口。
   for (const side of [141,158,170]) {
     const image=visual.renderImage({history,stale:false},false,side,side);
-    assert.ok(image.includes('点击刷新')); assert.ok(/↻ \d{2}:\d{2}/.test(image));
+    assert.ok(!image.includes('点击刷新')); assert.ok(/更新 \d{2}:\d{2}:\d{2}/.test(image));
     const textPositions=[...image.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"/g)];
     assert.ok(textPositions.length>=6);
     assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=14&&Number(m[2])<=150));
@@ -282,8 +282,19 @@ function distributionFixture() {
       lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
-  const presented=[];
-  class ListWidget {
+  const presented=[], feedback=[];
+  class WebView {
+    async loadHTML(html){this.entry={html,updates:[],requestsAtOpen:requestCount};feedback.push(this.entry);}
+    async present(){this.entry.presented=true;}
+    async evaluateJavaScript(js){this.entry.updates.push(js);}
+  }
+  class Stack {
+    constructor(){this.children=[];}
+    addStack(){const child=new Stack();this.children.push(child);return child;}
+    layoutHorizontally(){} setPadding(){} addSpacer(){}
+  }
+
+  class ListWidget extends Stack {
     async presentSmall(){presented.push('small');} async presentMedium(){presented.push('medium');}
     setPadding(){} addImage(){return {};} addText(value){(this.texts=this.texts||[]).push(String(value));return {};} addSpacer(){}
   }
@@ -304,7 +315,7 @@ function distributionFixture() {
   }};
   const environment = { UNICOM_FLOW_TEST:true, config:{runsInWidget:true,runsInApp:false,widgetFamily:'medium'},
     args:{widgetParameter:'',queryParameters:{}}, importModule:name=>{assert.equal(name,'DmYY');return dependency;},
-    FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, module:{filename:'/documents/联通流量.js'},
+    FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, WebView, Data:{fromPNG:()=>({toBase64String:()=> 'FAKE_PREVIEW'})}, module:{filename:'/documents/联通流量.js'},
     Font:Object.assign(class extends Font {},Font,{boldSystemFont:size=>({size})}), Device:{screenSize:()=>({width:390,height:844})},
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   const integration = await load.runInNewContext(environment);
@@ -334,14 +345,24 @@ function distributionFixture() {
     const tapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:family}}});
     const prior=requestCount;
     await tapApi.main();
-    assert.equal(requestCount,prior+2); assert.equal(presented.at(-1),family);
-    assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');
-    assert.equal(new URL(widget.url).searchParams.get('ufFamily'),family);
-    assert.ok(widget.backgroundImage.includes('点击刷新'));
+    assert.equal(requestCount,prior+2);
+    const message=feedback.at(-1);
+    assert.equal(message.requestsAtOpen,prior);assert.equal(message.presented,true);
+    assert.ok(message.html.includes('正在刷新'));assert.ok(message.updates.join('').includes('刷新成功'));
+    assert.ok(widget.backgroundImage.includes('已刷新'));assert.ok(!widget.backgroundImage.includes('点击刷新'));
+    if(family==='medium') {
+      const areas=widget.children[0].children;
+      assert.equal(areas.length,2);
+      assert.ok(Math.abs(areas[0].size.width/areas[1].size.width-2)<1e-8);
+      assert.equal(new URL(areas[0].url).searchParams.has('ufRefresh'),false);
+      assert.equal(new URL(areas[1].url).searchParams.get('ufFamily'),'medium');
+      assert.equal(new URL(areas[1].url).searchParams.get('ufRefresh'),'1');
+    } else { assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');assert.equal(widget.children.length,0); }
+
   }
   apiError=true;
   const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
-  await staleApi.main(); assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
+  await staleApi.main(); assert.ok(feedback.at(-1).updates.join('').includes('刷新失败'));assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
   files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');
   apiError=false;
   const before=requestCount;

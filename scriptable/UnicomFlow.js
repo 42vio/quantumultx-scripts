@@ -608,14 +608,14 @@ function renderImage(result, medium, width, height) {
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true);
   }
   const date = new Date(data.at);
-  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
   const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
   const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击重试`
     : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
   const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`
     : incomplete ? '逐卡明细不全' : metrics.perMember ? '逐卡明细' : status ? '另有明细' : '';
-  const label = medium ? status ? `${time} · ${status}` : `↻ ${time} · 点击刷新`
-    : compactStatus ? `${time} · ${compactStatus}` : `↻ ${time} · 点击刷新`;
+  const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
+    : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
   text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
@@ -639,11 +639,21 @@ function makeWidget(result, medium) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.url = refreshURL(medium);
+  widget.url = medium ? 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) : refreshURL(false);
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height);
+  if (medium) {
+    // 透明点击层不改变背景图：左 2/3 打开配置，右 1/3 直接刷新。
+    const row = widget.addStack(); row.layoutHorizontally(); row.spacing = 0;
+    row.size = new Size(size.width, size.height);
+    for (const [width, url] of [[size.width * 2 / 3, widget.url], [size.width / 3, refreshURL(true)]]) {
+      const area = row.addStack(); area.size = new Size(width, size.height);
+      area.url = url; area.setPadding(0, 0, 0, 0); area.addSpacer();
+    }
+  }
+
   return widget;
 }
 
@@ -879,6 +889,38 @@ function createWidgetClass(DmYY) {
   };
 }
 
+async function refreshWithFeedback(instance, medium) {
+  const view = new WebView();
+  // 先展示触发状态再请求，不把加载文字当作新的成功查询时间。
+  await view.loadHTML(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0;padding:32px 22px;background:#${UF.bg};color:#${UF.text};font:16px -apple-system,sans-serif;text-align:center}
+    #spin{margin:28px auto;width:22px;height:22px;border:3px solid #8885;border-top-color:#${UF.blue};border-radius:50%;animation:turn .7s linear infinite}
+    @keyframes turn{to{transform:rotate(360deg)}}h2{font-size:21px}p{line-height:1.6;color:#${UF.muted}}
+    img{display:none;margin:24px auto;width:100%;max-width:${medium ? 600 : 300}px;border-radius:22px}
+    </style></head><body><div id="spin"></div><h2 id="status">正在刷新…</h2><p id="detail">已收到点击，正在查询联通用量</p><img id="preview" alt="刷新后的组件"></body></html>`);
+  const closed = view.present().catch(() => {});
+  try {
+    instance.widgetFamily = medium ? 'medium' : 'small';
+    await instance.loadResult();
+    if (instance.result && !instance.result.stale) instance.result.manualRefresh = true;
+    const widget = instance.result ? makeWidget(instance.result, medium) : errorWidget(instance.failure, medium);
+    Script.setWidget(widget);
+    const success = instance.result && !instance.result.stale;
+    const message = success ? '查询完成；桌面组件的重绘时间由 iOS 调度。'
+      : instance.result ? '查询未成功，继续显示上次缓存，更新时间保持不变。' : '查询未成功，请从配置菜单检查连接和 Cookie。';
+    const preview = widget.backgroundImage ? 'data:image/png;base64,' + Data.fromPNG(widget.backgroundImage).toBase64String() : '';
+    await view.evaluateJavaScript(`document.getElementById('spin').style.display='none';
+      document.getElementById('status').textContent=${JSON.stringify(success ? '刷新成功' : '刷新失败')};
+      document.getElementById('detail').textContent=${JSON.stringify(message)};
+      document.getElementById('preview').src=${JSON.stringify(preview)};
+      document.getElementById('preview').style.display=${JSON.stringify(preview ? 'block' : 'none')};`);
+  } catch (_) {
+    // 用户提前关闭反馈页也不影响已经完成的数据保存。
+    try { await view.evaluateJavaScript("document.getElementById('spin').style.display='none';document.getElementById('status').textContent='刷新未完成';document.getElementById('detail').textContent='请重新点击组件重试';"); } catch (_) {}
+  }
+  await closed;
+}
+
 async function main() {
   let dependency;
   try { dependency = importModule('DmYY'); }
@@ -893,10 +935,7 @@ async function main() {
   if (config.runsInApp && args.queryParameters && args.queryParameters.ufRefresh === '1') {
     const instance = new Widget(args.widgetParameter || '');
     const medium = args.queryParameters.ufFamily === 'medium';
-    instance.widgetFamily = medium ? 'medium' : 'small';
-    const widget = await instance.render();
-    Script.setWidget(widget);
-    if (medium) await widget.presentMedium(); else await widget.presentSmall();
+    await refreshWithFeedback(instance, medium);
     Script.complete(); return;
   }
   await dependency.Runing(Widget, args.widgetParameter || '', false);

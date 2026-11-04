@@ -605,7 +605,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
       const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
-      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?amount(peak):'';
+      const peakDisplayed=peak>=1024?peak/1024:peak;
+      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?peakDisplayed.toFixed(peakDisplayed>10?1:2).replace(/\.0+$/,'')+(peak>=1024?' GB':' MB'):'';
       for(const d of report.days){
         const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
         const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*140))+'px';

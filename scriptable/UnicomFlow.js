@@ -576,7 +576,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
     const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:360}};
-    const amount=value=>value==null?'—':value>=1024?(value/1024).toFixed(2)+' GB':value.toFixed(2)+' MB';
+    const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return displayed.toFixed(displayed>10?1:2)+(value>=1024?' GB':' MB');};
     const totalFor=(report,key)=>report.period==='months'?report.average[key]:report.summary?report.summary[key]:report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
     const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
     const status=d=>current==='year'&&d.mb!=null?(d.key===report.month?'本月进行中':d.partial?'部分记录':'已结束'):d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
@@ -602,7 +602,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
       const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
-      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?amount(peak).replace(/\.00(?= )/,''):'';
+      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?amount(peak).replace(/\.0+(?= )/,''):'';
       for(const d of report.days){
         const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
         const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*140))+'px';

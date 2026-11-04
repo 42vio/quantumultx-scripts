@@ -434,9 +434,9 @@ function distributionFixture() {
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
   // 今日图例整组靠右，两行本身左对齐。
-  const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(90.5|100.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
+  const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
   assert.equal(dailyLegends.length,2);assert.equal(dailyLegends[0][1],dailyLegends[1][1]);
-  assert.ok(Number(dailyLegends[0][1])>270);assert.equal(Number(dailyLegends[0][2]),90.5);assert.equal(Number(dailyLegends[1][2]),100.5);
+  assert.ok(Number(dailyLegends[0][1])>270);assert.equal(Number(dailyLegends[0][2]),84.5);assert.equal(Number(dailyLegends[1][2]),94.5);
   const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>更新 [^<]+<\/text>/);
   assert.ok(footerTime);assert.equal(Number(footerTime[1]),146.5);
   const step=(338-26)/24;
@@ -444,7 +444,7 @@ function distributionFixture() {
     const expected=13+(hour+0.5)*step;
     const tick=aligned.match(new RegExp('<text x="([0-9.]+)"[^>]*text-anchor="middle"[^>]*>'+String(hour).padStart(2,'0')+'</text>'));
     assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
-    assert.ok(aligned.includes(`x="${expected-0.25}" y="105"`));
+    assert.ok(aligned.includes(`x="${expected-0.25}" y="99"`));
   }
 
   // 过去小时灰色占位、真实零增量为紫色；当前无采样及未来小时不画柱。
@@ -453,7 +453,7 @@ function distributionFixture() {
   const noonVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:NoonDate,Color,Rect,Size,Path,DrawContext,Font});
   const emptyHours={...history,data:{...history.data,at:fixedNoon},events:[]};
   const dayImage=noonVisual.renderImage({history:emptyHours,stale:false},true,338,158);
-  const hourlyBar=hour=>`x="${13+(hour+0.5)*13-5}" y="126.5" width="10" height="1.5"`;
+  const hourlyBar=hour=>`x="${13+(hour+0.5)*13-4.25}" y="126.5" width="8.5" height="1.5"`;
   for(let hour=0;hour<12;hour++) assert.ok(dayImage.includes(hourlyBar(hour)+' fill="#454548"'));
   for(let hour=12;hour<24;hour++) assert.ok(!dayImage.includes(hourlyBar(hour)));
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
@@ -469,13 +469,13 @@ function distributionFixture() {
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
   const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
-  const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:90.5|100.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
+  const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
   assert.equal(unevenLegends.length,2);assert.equal(unevenLegends[0][1],unevenLegends[1][1]);
   assert.ok(unevenWidget.includes('>主 6.0MB</text>'));assert.ok(unevenWidget.includes('>副 1.0GB</text>'));
   assert.ok(stackedWidget.includes('>主 60.0MB</text>'));assert.ok(stackedWidget.includes('>副 30.0MB</text>'));
-  const hour10x=13+(10+0.5)*13-5;
-  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23*60/90}" width="10" height="${23*60/90}" fill="#0A94FF"`));
-  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-23}" width="10" height="${23*30/90}" fill="#8A73FF"`));
+  const hour10x=13+(10+0.5)*13-4.25;
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29*60/90}" width="8.5" height="${29*60/90}" fill="#0A94FF"`));
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29}" width="8.5" height="${29*30/90}" fill="#8A73FF"`));
 
   // 小号在不同手机尺寸下使用相同的安全留白，始终显示查询时间与刷新入口。
   for (const side of [141,158,170]) {

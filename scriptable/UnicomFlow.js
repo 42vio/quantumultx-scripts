@@ -823,14 +823,14 @@ function renderImage(result, medium, width, height) {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false);
-    const chartX = pad, chartY = 105, chartW = width - 2 * pad, chartH = height - chartY - 30;
+    const chartX = pad, chartY = 99, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
     text(ctx, '今日用量',
-      chartX, 90, chartW - 80, 12, 8, UF.muted);
+      chartX, 84, chartW - 80, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
-      const barWidth = Math.max(1, cell - 3);
+      const barWidth = Math.max(1, cell - 4.5);
       ctx.setFillColor(new Color(hour % 6 === 0 ? UF.gridMajor : UF.gridMinor));
       ctx.fillRect(new Rect(center - 0.25, chartY, 0.5, chartH));
       if (hour > currentHour) return;
@@ -867,7 +867,7 @@ function renderImage(result, medium, width, height) {
   text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = 84;
+    const legendY = 78;
     const sampled = buckets.some(b => b.samples);
     const unknown = buckets.reduce((sum, b) => sum + b.unknownMB, 0);
     const legends = [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].map(([color, name, key]) => {

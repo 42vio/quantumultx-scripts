@@ -791,7 +791,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
     text(ctx, primary, textX, y + 14, textWidth, 30, UF.usageFontSize, UF.text, 'number');
   }
   let detail = '未返回明细';
-  if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
+  if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')}(${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   detail = detail.replace(/(\d)(MB|GB)/g, '$1 $2');
   const detailSize = Math.min(UF.totalFontSize, textWidth / Math.max(1, numberWidth(detail, 1, 'total')));
   text(ctx, detail, textX, y + 44, textWidth, 16, detailSize, metric ? UF.muted : UF.warning, 'total');

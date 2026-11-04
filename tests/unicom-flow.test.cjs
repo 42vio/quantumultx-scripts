@@ -732,8 +732,8 @@ function distributionFixture() {
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
     assert.match(w.backgroundImage, /font-family="sans-serif" font-weight="500" font-size="24">2.3<\/text>/);
-    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27 GB \(9%\)<\/text>/);
-    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27 GB \(9%\)<\/text>/g)];
+    assert.match(w.backgroundImage, /font-family="Menlo-Regular" font-weight="400" font-size="11.5">27 GB\(9%\)<\/text>/);
+    const rows=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)"[^>]*>2.3<\/text>|<text x="([0-9.]+)"[^>]*>27 GB\(9%\)<\/text>/g)];
     assert.equal(rows.length,2);assert.equal(rows[0][1],rows[1][2]);
   }
   // 过宽数字缩小后单位仍在卡片安全区；非法字号回退默认。

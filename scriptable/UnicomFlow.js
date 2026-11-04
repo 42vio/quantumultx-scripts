@@ -614,7 +614,7 @@ function renderImage(result, medium, width, height) {
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
   const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
-  const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击重试`
+  const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击右上角重试`
     : incomplete ? '逐卡明细未补全 · 暂不分色' : metrics.perMember ? metrics.note : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
   const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`
     : incomplete ? '逐卡明细不全' : metrics.perMember ? '逐卡明细' : status ? '另有明细' : '';
@@ -623,6 +623,10 @@ function renderImage(result, medium, width, height) {
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
   text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
+  if (medium) {
+    // 使用文字颜色绘制图标，点击区域另由透明布局提供。
+    text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);
+  }
   return ctx.getImage();
 }
 
@@ -643,17 +647,21 @@ function makeWidget(result, medium) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.url = medium ? 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) : refreshURL(false);
+  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height);
   if (medium) {
-    // 透明点击层不改变背景图：左 2/3 打开配置，右 1/3 直接刷新。
+    // 仅右上角 44×44 区域刷新，其他位置全部打开配置。
     const row = widget.addStack(); row.layoutHorizontally(); row.spacing = 0;
     row.size = new Size(size.width, size.height);
-    for (const [width, url] of [[size.width * 2 / 3, widget.url], [size.width / 3, refreshURL(true)]]) {
-      const area = row.addStack(); area.size = new Size(width, size.height);
+    const content = row.addStack(); content.size = new Size(size.width - 44, size.height);
+    content.url = widget.url; content.addSpacer();
+    const right = row.addStack(); right.layoutVertically(); right.spacing = 0;
+    right.size = new Size(44, size.height);
+    for (const [height, url] of [[44, refreshURL(true)], [size.height - 44, widget.url]]) {
+      const area = right.addStack(); area.size = new Size(44, height);
       area.url = url; area.setPadding(0, 0, 0, 0); area.addSpacer();
     }
   }
@@ -668,7 +676,7 @@ function errorWidget(message, medium = false) {
   const title = widget.addText('联通流量'); title.textColor = new Color(UF.text); title.font = Font.boldSystemFont(16);
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
-  widget.url = refreshURL(medium);
+  widget.url = 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name());
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
   return widget;
 }

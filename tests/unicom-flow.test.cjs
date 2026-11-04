@@ -291,7 +291,7 @@ function distributionFixture() {
   class Stack {
     constructor(){this.children=[];}
     addStack(){const child=new Stack();this.children.push(child);return child;}
-    layoutHorizontally(){} setPadding(){} addSpacer(){}
+    layoutHorizontally(){} layoutVertically(){} setPadding(){} addSpacer(){}
   }
 
   class ListWidget extends Stack {
@@ -353,17 +353,22 @@ function distributionFixture() {
     if(family==='medium') {
       const areas=widget.children[0].children;
       assert.equal(areas.length,2);
-      assert.ok(Math.abs(areas[0].size.width/areas[1].size.width-2)<1e-8);
+      assert.equal(areas[1].size.width,44);
+      const icon=areas[1].children[0], rest=areas[1].children[1];
+      assert.equal(icon.size.width,44);assert.equal(icon.size.height,44);
+      assert.equal(rest.size.height,114);
+      assert.equal(new URL(rest.url).searchParams.has('ufRefresh'),false);
+      assert.ok(widget.backgroundImage.includes('↻'));
       assert.equal(new URL(areas[0].url).searchParams.has('ufRefresh'),false);
-      assert.equal(new URL(areas[1].url).searchParams.get('ufFamily'),'medium');
-      assert.equal(new URL(areas[1].url).searchParams.get('ufRefresh'),'1');
-    } else { assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');assert.equal(widget.children.length,0); }
+      assert.equal(new URL(icon.url).searchParams.get('ufFamily'),'medium');
+      assert.equal(new URL(icon.url).searchParams.get('ufRefresh'),'1');
+    } else { assert.equal(new URL(widget.url).searchParams.has('ufRefresh'),false);assert.equal(widget.children.length,0);assert.ok(!widget.backgroundImage.includes('↻')); }
 
   }
   apiError=true;
   const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
   await staleApi.main(); assert.ok(feedback.at(-1).updates.join('').includes('刷新失败'));assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
-  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(new URL(widget.url).searchParams.get('ufRefresh'),'1');
+  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(new URL(widget.url).searchParams.has('ufRefresh'),false);
   apiError=false;
   const before=requestCount;
   const instance=new AppWidget('');

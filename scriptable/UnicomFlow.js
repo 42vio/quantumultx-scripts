@@ -1081,8 +1081,18 @@ function createWidgetClass(DmYY) {
     async renderMedium() { this.widgetFamily = 'medium'; return this.render(); }
 
     async renderAppView(options) {
-      // 沿用 DmYY 卡片分组和菜单图标，不显示默认的第三方作者头像。
-      return super.renderAppView(options, false);
+      // 统一清理 DmYY 配置页的样式来源页脚，包含主菜单和全部子菜单。
+      // 只调整本组件页面，不改动共享依赖或源码中的来源说明。
+      const view = new WebView();
+      const cleanView = new Proxy(view, {
+        get(target, key) {
+          if (key === 'loadHTML') return (html, ...args) => target.loadHTML(
+            html.replace(/<div\s+class=["']copyright["'][^>]*>[\s\S]*?<\/div>\s*<\/div>/gi, ''), ...args);
+          const value = target[key];
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      return super.renderAppView(options, false, cleanView);
     }
 
     async checkAndUpdateScript() {

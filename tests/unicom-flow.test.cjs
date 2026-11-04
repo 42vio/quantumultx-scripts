@@ -558,7 +558,10 @@ function distributionFixture() {
     constructor() { this.settings={}; this.baseSettings={}; this.widgetFamily='medium'; this._menuActions=[]; }
     registerAction(item){this._menuActions.push(item);}
     saveSettings(){} reopenScript(){}
-    async renderAppView(options, avatar){return {options,avatar};}
+    async renderAppView(options, avatar, view){
+      await view.loadHTML('<html><body><main>配置内容</main><div class="copyright"><div> </div><div>© 界面样式修改自 <a>@iMarkr.</a></div></div></body></html>');
+      return {options,avatar,page:feedback.at(-1)};
+    }
   }
   const dependency = { DmYY:MockDmYY, Runing:async Widget=>{
     const instance = new Widget('');
@@ -638,6 +641,12 @@ function distributionFixture() {
 
   const configPage=await instance.renderAppView(instance._menuActions);
   assert.equal(configPage.avatar,false);
+  assert.ok(configPage.page.html.includes('配置内容'));
+  assert.ok(!configPage.page.html.includes('界面样式修改自'));
+  assert.ok(!configPage.page.html.includes('copyright'));
+  assert.ok(!configPage.page.html.includes('@iMarkr'));
+  const subPage=await instance.fontSettings();
+  assert.ok(!subPage.page.html.includes('copyright'));
   const historyFile='/documents/UnicomFlow/history.json';
   const oldCached=JSON.parse(files.get(historyFile));delete oldCached.cardHistoryVersion;files.set(historyFile,JSON.stringify(oldCached));
   apiError=true;await instance.loadResult();assert.equal(instance.result,null);

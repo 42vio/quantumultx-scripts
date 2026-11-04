@@ -128,7 +128,7 @@ function distributionFixture() {
   const split=api.displayMetrics(distribution);
   assert.equal(split.leftLabel,'共享流量'); assert.equal(split.rightLabel,'主卡独享');
   assert.equal(split.left.total,120*1024); assert.equal(split.right.total,80*1024);
-  assert.equal(formatMB(split.left.used),'3.22GB'); assert.equal(formatMB(split.right.used),'8.81GB');
+  assert.equal(formatMB(split.left.used),'3.2GB'); assert.equal(formatMB(split.right.used),'8.8GB');
   const insideResources=distributionFixture(); insideResources.resources[0].details.push(insideResources.unshared[0].details[0]);delete insideResources.unshared;
   assert.equal(api.displayMetrics(parsePackages(insideResources)).right.total,80*1024); // 赠送包名称识别
   const forced=parsePackages(fixture(),{[base.packages[0].id]:'shared',[base.packages[1].id]:'exclusive'});
@@ -141,11 +141,17 @@ function distributionFixture() {
   assert.equal(base.categories.general.used, 2355.2);
   assert.equal(base.categories.directed.used, 38604.8);
   assert.equal(formatMB(base.categories.general.used), '2.3GB');
-  assert.equal(formatMB(null), '--');
+  assert.equal(formatMB(null), '—');
   assert.equal(formatMB(12.03*1024),'12.0GB');assert.equal(formatMB(37.77*1024),'37.8GB');
-  assert.equal(formatMB(515.27),'515.3MB');assert.equal(formatMB(9.87*1024),'9.87GB');
+  assert.equal(formatMB(515.27),'515.3MB');assert.equal(formatMB(9.87*1024),'9.9GB');
   assert.equal(formatMB(10.39),'10.4MB');assert.equal(formatMB(10.39*1024),'10.4GB');
   assert.equal(formatMB(10.01),'10.0MB');assert.equal(formatMB(10),'10.0MB');
+  assert.equal(formatMB(0),'0MB');assert.equal(formatMB(0,'daily'),'0MB');
+  assert.equal(formatMB(0.03),'0.03MB');assert.equal(formatMB(0.03,'daily'),'0.03MB');
+  assert.equal(formatMB(954.53),'954.5MB');assert.equal(formatMB(954.53,'daily'),'954.53MB');
+  assert.equal(formatMB(1.23*1024,'daily'),'1.23GB');assert.equal(formatMB(10.39*1024,'daily'),'10.39GB');
+  assert.equal(formatMB(120*1024,'total'),'120GB');assert.equal(formatMB(500,'total'),'500MB');
+  assert.equal(formatMB(80.5*1024,'total'),'80.5GB');assert.equal(formatMB(0.03,'total'),'0.03MB');
   assert.equal(megabytes('1,024 MB'), 1024);
   assert.equal(megabytes('2', 'GB'), 2048);
   assert.equal(megabytes('not-a-number'), null);
@@ -323,14 +329,14 @@ function distributionFixture() {
   assert.ok(html.includes('>今日</button>'));assert.ok(html.includes('>月度趋势</button>'));
   let prevented=false;listeners.get('dblclick')({preventDefault:()=>{prevented=true;}});assert.equal(prevented,true);
 
-  assert.equal(elements.get('axis-max').textContent,'10 MB');
+  assert.equal(elements.get('axis-max').textContent,'10.00 MB');
   elements.get('tab-hours').onclick();assert.equal(elements.get('axis-max').hidden,true);
   elements.get('tab-month').onclick();
   const monthBars=elements.get('chart').children;
   assert.equal(monthBars[0].children[0].style.height,'4px');assert.ok(monthBars[0].children[0].className.includes('missing'));
   assert.equal(monthBars[3].children[0].style.height,'4px');assert.equal(monthBars[3].children[0].className,'fill');
   assert.equal(monthBars[4].children[0].style.height,'0px');assert.ok(monthBars[4].children[0].className.includes('future'));
-  assert.equal(elements.get('selected').textContent,'2026-11-04');assert.equal(elements.get('selected-total').textContent,'0.00 MB');
+  assert.equal(elements.get('selected').textContent,'2026-11-04');assert.equal(elements.get('selected-total').textContent,'0 MB');
   elements.get('chart').children[1].onclick();assert.equal(monthBars[1].attributes['aria-pressed'],'true');assert.equal(monthBars[3].attributes['aria-pressed'],'false');assert.equal(elements.get('selected').textContent,'2026-11-02');assert.equal(elements.get('selected-total').textContent,'—');
   elements.get('rows').children[2].children[0].children[0].onclick();assert.equal(elements.get('selected').textContent,'2026-11-03');
   elements.get('tab-hours').onclick();assert.equal(elements.get('chart').children.length,24);assert.equal(elements.get('rows').children.length,24);
@@ -346,16 +352,16 @@ function distributionFixture() {
   assert.equal(JSON.stringify(cardCross),beforeReports); // 只读视图不改写历史
 
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('total').textContent,'120.0 MB');assert.equal(elements.get('main-total').textContent,'80.0 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入本月合计'));
-  assert.equal(elements.get('axis-max').textContent,'90 MB');assert.equal(elements.get('axis-max').hidden,false);
+  assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入本月合计'));
+  assert.equal(elements.get('axis-max').textContent,'90.00 MB');assert.equal(elements.get('axis-max').hidden,false);
   assert.equal(elements.get('chart').children[2].children[0].style.height,'140px');
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
-  elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-main').textContent,'主卡 60.0 MB');assert.equal(elements.get('selected-vice').textContent,'副卡 30.0 MB');
+  elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-main').textContent,'主卡 60.00 MB');assert.equal(elements.get('selected-vice').textContent,'副卡 30.00 MB');
   const dailyRow=elements.get('rows').children[2].children;
-  assert.equal(dailyRow.length,6);assert.equal(dailyRow[1].textContent,'60.0 MB');assert.equal(dailyRow[2].textContent,'30.0 MB');assert.equal(dailyRow[4].textContent,'90.0 MB');
-  elements.get('tab-year').onclick();assert.equal(elements.get('rows').children[11].children[1].textContent,'80.0 MB');assert.equal(elements.get('rows').children[11].children[2].textContent,'40.0 MB');
+  assert.equal(dailyRow.length,6);assert.equal(dailyRow[1].textContent,'60.00 MB');assert.equal(dailyRow[2].textContent,'30.00 MB');assert.equal(dailyRow[4].textContent,'90.00 MB');
+  elements.get('tab-year').onclick();assert.equal(elements.get('rows').children[11].children[1].textContent,'80.00 MB');assert.equal(elements.get('rows').children[11].children[2].textContent,'40.00 MB');
   assert.equal(elements.get('total').textContent,'积累中');assert.equal(elements.get('main-total').textContent,'—');assert.equal(elements.get('main-label').textContent,'主卡月均');
   const yearSegments=elements.get('chart').children[11].children[0].children;
   assert.equal(yearSegments.length,2);assert.equal(yearSegments[0].style.background,'#0A94FF');
@@ -364,11 +370,22 @@ function distributionFixture() {
   const averagedReports=api.statisticsReports(averageHistory,midnight);
   const averageHTML=api.statisticsHTML(averagedReports,false,'year');
   new vm.Script(averageHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('axis-max').textContent,'300 MB');
-  assert.equal(elements.get('total').textContent,'150.0 MB');assert.equal(elements.get('main-total').textContent,'100.0 MB');assert.equal(elements.get('vice-total').textContent,'50.0 MB');
+  assert.equal(elements.get('axis-max').textContent,'300.00 MB');
+  assert.equal(elements.get('total').textContent,'150.00 MB');assert.equal(elements.get('main-total').textContent,'100.00 MB');assert.equal(elements.get('vice-total').textContent,'50.00 MB');
   assert.ok(elements.get('coverage').textContent.includes('2 个已结束月份'));assert.ok(elements.get('coverage').textContent.includes('1 个部分记录月'));
   assert.equal(elements.get('rows').children[11].children[5].textContent,'本月进行中');
   assert.equal(elements.get('rows').children[9].children[5].textContent,'部分记录');
+  // 网页各视图保留两位：大 MB、小 MB 和 GB 不走组件默认精度。
+  const fractionalReports=api.statisticsReports(cardCross,midnight);
+  fractionalReports.month.days[2]={...fractionalReports.month.days[2],mb:954.53,mainMB:0.03,viceMB:954.5,unknownMB:0};
+  let fractionalHTML=api.statisticsHTML(fractionalReports);
+  new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  elements.get('chart').children[2].onclick();
+  assert.equal(elements.get('selected-total').textContent,'954.53 MB');assert.equal(elements.get('selected-main').textContent,'主卡 0.03 MB');
+  fractionalReports.month.days[2].mb=10.39*1024;
+  fractionalHTML=api.statisticsHTML(fractionalReports);
+  new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'10.39 GB');
   const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
   fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',averageHTML);
   api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports));api.applyTheme({theme:'黑色'});
@@ -409,7 +426,7 @@ function distributionFixture() {
 
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
-  assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.02GB'));
+  assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.0GB'));
   const sharedSegments=[...aligned.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
   assert.equal(sharedSegments.length,2);
   const quotaRects=[...aligned.matchAll(/<rect x="[0-9.]+" y="[0-9.]+" width="5" height="([0-9.]+)" rx="([0-9.]+)" ry="([0-9.]+)"/g)];
@@ -433,9 +450,9 @@ function distributionFixture() {
   assert.ok(/x="13" y="[0-9.]+" width="5" height="[0-9.]+" rx="[0-9.]+" ry="[0-9.]+" fill="#8A73FF"/.test(viceOnly));
   fs.writeFileSync(output+'/small-zero.svg',visual.renderImage({history:{...history,data:viceOnlyData},stale:false},false,158,158));
   fs.writeFileSync(output+'/medium-zero.svg',viceOnly);
-  assert.ok(!viceOnly.includes('NaN'));assert.ok(!viceOnly.includes('主 0.0MB'));assert.ok(!viceOnly.includes('副 3.22GB'));
+  assert.ok(!viceOnly.includes('NaN'));assert.ok(!viceOnly.includes('主 0MB'));assert.ok(!viceOnly.includes('副 3.2GB'));
   const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
-  assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0.0MB'));
+  assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0MB'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
   // 今日图例整组靠右，两行本身左对齐。
   const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
@@ -464,7 +481,7 @@ function distributionFixture() {
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158);
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
   assert.ok(dayImage.includes('>今日用量</text>'));assert.ok(dayImage.includes('>主 —</text>'));assert.ok(dayImage.includes('>副 —</text>'));
-  assert.ok(zeroImage.includes('>主 0.0MB</text>'));assert.ok(zeroImage.includes('>副 0.0MB</text>'));
+  assert.ok(zeroImage.includes('>主 0MB</text>'));assert.ok(zeroImage.includes('>副 0MB</text>'));
   assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
   const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158);
   assert.ok(unknownImage.includes('>主 —</text>'));assert.ok(unknownImage.includes('>副 —</text>'));
@@ -475,8 +492,8 @@ function distributionFixture() {
   const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
   const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
   assert.equal(unevenLegends.length,2);assert.equal(unevenLegends[0][1],unevenLegends[1][1]);
-  assert.ok(unevenWidget.includes('>主 6.0MB</text>'));assert.ok(unevenWidget.includes('>副 1.0GB</text>'));
-  assert.ok(stackedWidget.includes('>主 60.0MB</text>'));assert.ok(stackedWidget.includes('>副 30.0MB</text>'));
+  assert.ok(unevenWidget.includes('>主 6.00MB</text>'));assert.ok(unevenWidget.includes('>副 1.00GB</text>'));
+  assert.ok(stackedWidget.includes('>主 60.00MB</text>'));assert.ok(stackedWidget.includes('>副 30.00MB</text>'));
   const hour10x=13+(10+0.5)*13-4.25;
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29*60/90}" width="8.5" height="${29*60/90}" fill="#0A94FF"`));
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29}" width="8.5" height="${29*30/90}" fill="#8A73FF"`));

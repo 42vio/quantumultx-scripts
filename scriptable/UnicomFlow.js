@@ -146,11 +146,14 @@ function megabytes(value, unit) {
   return multiplier == null ? null : n * multiplier;
 }
 
-function formatMB(value) {
-  if (value == null || !Number.isFinite(value)) return '--';
-  const scale = value >= 1048576 ? [1048576, 'TB'] : value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
+function formatMB(value, mode = 'usage') {
+  if (value == null || !Number.isFinite(value)) return '—';
+  if (value === 0) return '0MB';
+  const scale = value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
   const displayed = value / scale[0];
-  return `${displayed.toFixed(displayed > 10 ? 1 : 2).replace(/(\.\d)0$/, '$1')}${scale[1]}`;
+  const digits = mode === 'daily' || value < 1 ? 2 : 1;
+  const number = displayed.toFixed(digits);
+  return `${mode === 'total' ? String(Number(number)) : number}${scale[1]}`;
 }
 
 function dayKey(time) {
@@ -576,7 +579,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
     const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:360}};
-    const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return displayed.toFixed(displayed>10?1:2)+(value>=1024?' GB':' MB');};
+    const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return value===0?'0 MB':displayed.toFixed(2)+(value>=1024?' GB':' MB');};
     const totalFor=(report,key)=>report.period==='months'?report.average[key]:report.summary?report.summary[key]:report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
     const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
     const status=d=>current==='year'&&d.mb!=null?(d.key===report.month?'本月进行中':d.partial?'部分记录':'已结束'):d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
@@ -602,7 +605,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
       const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
-      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?amount(peak).replace(/\.0+(?= )/,''):'';
+      el('axis-max').hidden=peak===0;el('axis-max').textContent=peak>0?amount(peak):'';
       for(const d of report.days){
         const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
         const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*140))+'px';
@@ -778,7 +781,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   const size = Math.min(base, textWidth / Math.max(1, primary.length * 0.62));
   text(ctx, primary, textX, y + 15, textWidth, 29, size, UF.text, 'number');
   let detail = '未返回明细';
-  if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total)} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
+  if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')} (${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   const detailSize = Math.min(compact ? 10 : 11, textWidth / Math.max(1, detail.length * 0.7));
   text(ctx, detail, textX, y + 43, textWidth, 13, detailSize, metric ? UF.muted : UF.warning, 'number');
   const barY = y + 18, barH = 37, barW = 5;
@@ -874,7 +877,7 @@ function renderImage(result, medium, width, height) {
     const legends = [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].map(([color, name, key]) => {
       const used = buckets.reduce((sum, b) => sum + b[key], 0);
       // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
-      const value = sampled && (used > 0 || unknown === 0) ? formatMB(used) : '—';
+      const value = sampled && (used > 0 || unknown === 0) ? formatMB(used, 'daily') : '—';
       return { color, caption: name + ' ' + value };
     });
     // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
@@ -955,7 +958,7 @@ async function chooseCategory(store, result) {
   list.forEach(p => a.addAction(`[${p.category === 'general' && p.shared != null ? p.shared ? '共享通用' : '非共享通用' : labels[p.category]}] ${p.name}`)); a.addCancelAction('取消');
   const index = await a.presentSheet(); if (index < 0) return;
   const p = list[index], b = new Alert(); b.title = p.name;
-  b.message = `已用 ${formatMB(p.used)} / 总量 ${p.unlimited ? '不限量' : formatMB(p.total)}`;
+  b.message = `已用 ${formatMB(p.used)} / 总量 ${p.unlimited ? '不限量' : formatMB(p.total, 'total')}`;
   ['共享通用', '非共享通用', '通用（自动识别）', '定向', '排除'].forEach(s => b.addAction(s)); b.addCancelAction('取消');
   const selected = await b.presentSheet(); if (selected < 0) return;
   const settings = store.read('categories', {}); settings[p.id] = ['shared', 'exclusive', 'general', 'directed', 'ignore'][selected];

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {monthlyReport, monthlyHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -182,6 +182,76 @@ function distributionFixture() {
   assert.equal(todayBuckets(updateHistory(h, sample(midnight, 20)), midnight).reduce((n,b) => n+b.samples, 0), 0);
   const nextMonth = new Date(2026, 11, 1, 1).getTime();
   assert.equal(updateHistory(h, sample(nextMonth, 20)).events.length, 0);
+
+  // 日聚合与小时图相互独立：未知日期不补零，真实零增量仍有记录。
+  const firstMonthly=api.monthlyReport(updateHistory(null,sample(at)),at);
+  assert.equal(firstMonthly.days[2].mb,null);
+  assert.equal(firstMonthly.days[1].mb,null);
+  assert.equal(firstMonthly.days[3].future,true);
+  assert.equal(firstMonthly.totalMB,null);
+  let monthHistory=updateHistory(null,sample(at));
+  monthHistory=updateHistory(monthHistory,sample(at+3600000,5));
+  let monthReport=api.monthlyReport(monthHistory,at+3600000);
+  assert.equal(monthReport.totalMB,10);assert.equal(monthReport.days[2].intervals,1);
+  const originalMonthly=JSON.stringify(monthHistory.months);
+  const equalTime=updateHistory(monthHistory,sample(at+3600000,100));
+  assert.equal(JSON.stringify(equalTime.months),originalMonthly);
+  const cross=updateHistory(monthHistory,sample(midnight,20));
+  monthReport=api.monthlyReport(cross,midnight);
+  assert.equal(monthReport.totalMB,10);assert.equal(monthReport.days[3].mb,null);
+  assert.equal(monthReport.unallocatedMB,30);assert.equal(monthReport.crossDay.length,1);
+  assert.ok(monthReport.days[2].notes.includes('跨日区间未分配'));
+  assert.ok(monthReport.days[3].notes.includes('跨日区间未分配'));
+  const zero=updateHistory(cross,sample(midnight+3600000,20));
+  assert.equal(api.monthlyReport(zero,midnight).days[3].mb,0);
+  const rollback=updateHistory(zero,sample(midnight+7200000,1));
+  monthReport=api.monthlyReport(rollback,midnight);
+  assert.equal(monthReport.totalMB,10);assert.ok(monthReport.days[3].notes.some(n=>n.includes('回退')));
+  const changed=updateHistory(zero,sample(midnight+7200000,22,1024));
+  assert.equal(api.monthlyReport(changed,midnight).totalMB,10);
+  const legacy={...monthHistory};delete legacy.months;
+  const imported=updateHistory(legacy,sample(at+7200000,7));
+  assert.equal(api.monthlyReport(imported,at).totalMB,14);
+  assert.equal(api.monthlyReport(updateHistory(imported,sample(at+10800000,8)),at).totalMB,16);
+  const separated=updateHistory(monthHistory,{...sample(at+7200000,7),session:'new-user'});
+  assert.equal(api.monthlyReport(separated,at).totalMB,null);
+  const afterSevenDays=updateHistory(monthHistory,sample(at+10*86400000,100));
+  assert.equal(afterSevenDays.events.length,0);assert.equal(api.monthlyReport(afterSevenDays,at+10*86400000).totalMB,10);
+  const december=updateHistory(monthHistory,sample(nextMonth,0));
+  assert.ok(december.months['2026-11']);assert.ok(december.months['2026-12']);
+  assert.equal(api.monthlyReport(december,nextMonth).totalMB,null);
+  const january=new Date(2027,0,1,12).getTime();
+  const januaryHistory=updateHistory(december,sample(january,0));
+  assert.equal(januaryHistory.months['2026-11'],undefined);assert.ok(januaryHistory.months['2026-12']);
+  assert.equal(api.monthlyReport(januaryHistory,january).days.length,31);
+  const leap=new Date(2028,1,2,12).getTime();
+  assert.equal(api.monthlyReport(updateHistory(null,sample(leap)),leap).days.length,29);
+  // 旧版缓存可离线显示过去保留的同日记录。
+  assert.equal(api.monthlyReport(legacy,at).totalMB,10);
+
+  // 执行月度页实际脚本，确认日期点击、零值、缺失值和明细渲染。
+  class Element {
+    constructor(){this.children=[];this.dataset={};this.style={};this.classList={toggle:()=>{}};}
+    append(...items){this.children.push(...items);}setAttribute(){}
+  }
+  const elements=new Map();const doc={getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element(),querySelectorAll:()=>elements.get('chart').children};
+  const html=api.monthlyHTML(api.monthlyReport(zero,midnight),true);
+  const pageCode=html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  new vm.Script(pageCode).runInNewContext({document:doc});
+  assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
+  assert.equal(elements.get('selected').textContent,'2026-11-04');
+  assert.ok(elements.get('detail').textContent.includes('0.00 MB'));
+  elements.get('chart').children[1].onclick();
+  assert.equal(elements.get('selected').textContent,'2026-11-02');assert.ok(elements.get('detail').textContent.includes('—'));
+  elements.get('rows').children[2].children[0].children[0].onclick();
+  assert.equal(elements.get('selected').textContent,'2026-11-03');
+  const malicious=api.monthlyHTML({...monthReport,today:'</script><img src=x>'});
+  assert.equal((malicious.match(/<\/script>/g)||[]).length,1);
+  assert.ok(!html.includes('13000000001'));
+  api.applyTheme({theme:'白色'});assert.ok(api.monthlyHTML(monthReport).includes('color-scheme:light'));
+  api.applyTheme({theme:'黑色'});
+
+  const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});fs.writeFileSync(monthlyOutput+'/monthly.html',html);
 
   // 真正的原生绘图代码在 mock 中执行，将相同绘图指令输出为 SVG 供视觉检查。
   const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -382,6 +452,15 @@ function distributionFixture() {
   assert.ok(menus.some(item=>item.title==='组件主题' && item.options.join(',')==='黑色,白色'));
   assert.ok(menus.some(item=>item.title==='显示方式' && item.options.join(',')==='统一显示,主副卡分开显示'));
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
+  assert.ok(menus.some(item=>item.title==='本月用量'));
+  const queriesBeforeMonthly=requestCount;
+  await instance.showMonthlyUsage();
+  assert.equal(requestCount,queriesBeforeMonthly+2);
+  assert.ok(feedback.at(-1).html.includes('本月用量'));
+  apiError=true;await instance.showMonthlyUsage();
+  assert.ok(feedback.at(-1).html.includes('当前为缓存'));
+  apiError=false;
+
   assert.ok(menus.some(item=>item.title==='账户设置'));
   assert.ok(menus.some(item=>item.title==='代理缓存'));
   assert.ok(menus.some(item=>item.title==='颜色配置'));
@@ -461,5 +540,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧记录迁移/两个月保留/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

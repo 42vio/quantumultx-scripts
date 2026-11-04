@@ -392,13 +392,107 @@ function snapshotSignature(packages) {
     .map(p => [p.id, p.category, p.shared == null ? null : p.shared, p.total]).sort((a, b) => a[0].localeCompare(b[0])));
 }
 
+// 月度仅保存按日聚合；小时图仍使用短期区间记录，不累积秒级明细。
+function updateMonths(previous, sample, prev, interval, note, legacyEvents = []) {
+  const months = JSON.parse(JSON.stringify(previous || {}));
+  const now = new Date(sample.at);
+  const oldest = dayKey(new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()).slice(0, 7);
+  const current = dayKey(sample.at).slice(0, 7);
+  for (const key of Object.keys(months)) if (key < oldest || key > current) delete months[key];
+  const day = time => {
+    const key = dayKey(time), month = key.slice(0, 7);
+    if (month < oldest || month > current) return null;
+    if (!months[month]) months[month] = { days: {}, crossDay: [] };
+    if (!months[month].days[key]) months[month].days[key] = { mb: 0, intervals: 0, first: null, last: null, notes: [] };
+    return months[month].days[key];
+  };
+  const touch = time => {
+    const d = day(time); if (!d) return;
+    d.first = d.first == null ? time : Math.min(d.first, time);
+    d.last = d.last == null ? time : Math.max(d.last, time);
+  };
+  const record = event => {
+    if (!Number.isFinite(event.from) || !Number.isFinite(event.at) || event.from >= event.at || event.at > sample.at
+      || !Number.isFinite(event.mb) || event.mb < 0) return;
+    touch(event.from); touch(event.at);
+    if (dayKey(event.from) === dayKey(event.at)) {
+      const d = day(event.at); if (d) { d.mb += event.mb; d.intervals++; }
+    } else {
+      const month = months[dayKey(event.at).slice(0, 7)];
+      if (month) month.crossDay.push({ from: event.from, at: event.at, mb: event.mb });
+      const start = new Date(event.from); start.setHours(0, 0, 0, 0);
+      // 跨日区间只能确认总量，不能分配到各日，也不平均插值。
+      for (let i = 0; i < 63 && start.getTime() <= event.at; i++, start.setDate(start.getDate() + 1)) {
+        const d = day(start.getTime());
+        if (d && !d.notes.includes('跨日区间未分配')) d.notes.push('跨日区间未分配');
+      }
+    }
+  };
+  if (!previous) for (const event of legacyEvents) record(event);
+  if (prev) touch(prev.at);
+  touch(sample.at);
+  if (interval) record(interval);
+  else {
+    const d = day(sample.at);
+    const message = prev ? note : '首次记录，仅建立基线';
+    if (!d.notes.includes(message)) d.notes.push(message);
+  }
+  return months;
+}
+
+function monthlyReport(history, at = Date.now()) {
+  const date = new Date(at), month = dayKey(at).slice(0, 7), today = dayKey(at);
+  const savedMonths = history.months || updateMonths(null, history.data, null, null, '', history.events || []);
+  const saved = savedMonths[month] || { days: {}, crossDay: [] };
+  const count = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  const days = Array.from({ length: count }, (_, index) => {
+    const key = `${month}-${String(index + 1).padStart(2, '0')}`, d = saved.days[key];
+    return { key, day: index + 1, future: key > today, mb: d && d.intervals ? d.mb : null,
+      intervals: d ? d.intervals : 0, first: d ? d.first : null, last: d ? d.last : null, notes: d ? d.notes : [] };
+  });
+  const crossDay = (saved.crossDay || []).filter(e => Number.isFinite(e.mb) && e.mb >= 0);
+  return { month, today, days, totalMB: days.some(d => d.mb != null) ? days.reduce((sum, d) => sum + (d.mb || 0), 0) : null,
+    crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
+}
+
+function monthlyHTML(report, stale = false) {
+  // 数据仅有日期、区间与用量；不把账号号码、原始响应或 Cookie 传入页面。
+  const payload = JSON.stringify(report).replace(/</g, '\\u003c');
+  return `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    :root{color-scheme:${UF.bg === 'FFFFFF' ? 'light' : 'dark'}}*{box-sizing:border-box}body{margin:0;padding:24px 18px;background:#${UF.bg};color:#${UF.text};font:15px -apple-system,sans-serif}
+    h1{font-size:25px;margin:0 0 8px}h2{font-size:18px}.muted{color:#${UF.muted};line-height:1.7}strong{font-size:27px;font-weight:500}.panel{padding:18px 0;border-bottom:1px solid #${UF.track}}
+    .scroll{overflow-x:auto}.chart{display:flex;align-items:stretch;gap:4px;min-width:620px;height:150px;padding-top:12px}button{font:inherit;color:inherit;cursor:pointer}.bar{flex:1;min-width:15px;border:0;border-radius:4px;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.bar.selected{outline:1px solid #${UF.blue};outline-offset:2px}.fill{width:100%;border-radius:3px 3px 0 0;background:#${UF.purple}}.missing{background:transparent;border-bottom:1px dashed #${UF.muted}}.day{font-size:10px;color:#${UF.muted}}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #${UF.track};font-size:13px}th{color:#${UF.muted};font-weight:400}.date{border:0;background:none;padding:4px 0;color:#${UF.blue}}#detail{line-height:1.8;white-space:pre-line}.warning{color:#${UF.warning}}details{line-height:1.7}summary{padding:15px 0}
+    </style></head><body><h1 id="title">本月用量</h1><div class="muted">采样估算 · 非运营商日账单${stale ? ' · 当前为缓存' : ''}</div>
+    <section class="panel"><div class="muted">已记录的同日区间用量</div><strong id="total"></strong><p id="coverage" class="muted"></p><p id="unallocated" class="warning"></p></section>
+    <section class="panel"><div class="muted">点击柱子或下方日期查看明细，可左右滑动</div><div class="scroll"><div id="chart" class="chart"></div></div></section>
+    <section class="panel"><h2 id="selected"></h2><div id="detail"></div></section><table><thead><tr><th>日期</th><th>区间估算</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table>
+    <details><summary>统计口径与跨日区间</summary><p class="muted">仅统计两次成功查询在同一天、套餐口径一致且累计计数未回退的差值。未采样不等于零；当天记录也可能只覆盖部分时段。跨日区间单列，不摊到每天；跨月、套餐变化和计数回退时重新建立基线，已有日记录保留。联通记账可能延迟。</p><div id="cross" class="muted"></div></details>
+    <p id="updated" class="muted"></p><script>
+    const report=${payload};
+    const byId=id=>document.getElementById(id);
+    const amount=mb=>mb==null?'—':mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(2)+' MB';
+    const clock=t=>t==null?'无':new Date(t).toLocaleTimeString('zh-CN',{hour12:false});
+    const state=d=>d.future?'未到日期':d.notes.length?'有缺口':d.mb!=null?'采样区间':d.first!=null?'仅基线':'无采样';
+    const select=d=>{byId('selected').textContent=d.key;byId('detail').textContent='区间估算：'+amount(d.mb)+'\\n有效区间：'+d.intervals+' 段\\n成功采样范围：'+clock(d.first)+' — '+clock(d.last)+'\\n'+(d.notes.join('；')||'仅代表已记录区间，未采样时段不补零');document.querySelectorAll('.bar').forEach(b=>b.classList.toggle('selected',b.dataset.key===d.key));};
+    byId('title').textContent=report.month+' 本月用量';byId('total').textContent=amount(report.totalMB);
+    byId('coverage').textContent='有同日区间记录 '+report.days.filter(d=>d.mb!=null).length+' 天；其余日期未补零。';
+    byId('unallocated').textContent='跨日未分配：'+amount(report.unallocatedMB)+'（'+report.crossDay.length+' 段，未计入上方合计）';
+    const max=Math.max(1,...report.days.map(d=>d.mb||0));
+    for(const d of report.days){const bar=document.createElement('button');bar.className='bar';bar.dataset.key=d.key;bar.title=d.key+' '+amount(d.mb);bar.setAttribute('aria-label',bar.title);const fill=document.createElement('span');fill.className='fill'+(d.mb==null?' missing':'');fill.style.height=(d.mb==null?1:Math.max(2,d.mb/max*110))+'px';const label=document.createElement('span');label.className='day';label.textContent=d.day;bar.append(fill,label);bar.onclick=()=>select(d);byId('chart').append(bar);
+    const tr=document.createElement('tr');const date=document.createElement('td');const button=document.createElement('button');button.className='date';button.textContent=d.key.slice(5);button.onclick=()=>select(d);date.append(button);const value=document.createElement('td');value.textContent=amount(d.mb);const status=document.createElement('td');status.textContent=state(d);tr.append(date,value,status);byId('rows').append(tr);}
+    for(const e of report.crossDay){const p=document.createElement('p');p.textContent=new Date(e.from).toLocaleString('zh-CN',{hour12:false})+' → '+new Date(e.at).toLocaleString('zh-CN',{hour12:false})+'：'+amount(e.mb);byId('cross').append(p);}
+    byId('updated').textContent='最后成功查询：'+new Date(report.lastSuccess).toLocaleString('zh-CN',{hour12:false});select(report.days.find(d=>d.key===report.today)||report.days[0]);
+    </script></body></html>`;
+}
+
 function updateHistory(previous, sample) {
   const old = previous && previous.version === 1 && previous.session === sample.session ? previous : {};
   let events = Array.isArray(old.events) ? old.events.filter(e =>
     Number.isFinite(e.at) && e.at <= sample.at && e.at >= sample.at - 7 * 86400000) : [];
   const prev = old.last;
   if (prev && sample.at <= prev.at) return old;
-  let note = '正在积累数据';
+  let note = '正在积累数据', interval = null;
   const signature = snapshotSignature(sample.packages);
   if (prev && sample.at > prev.at && dayKey(prev.at).slice(0, 7) === dayKey(sample.at).slice(0, 7)
     && prev.signature === signature) {
@@ -410,12 +504,14 @@ function updateHistory(previous, sample) {
       delta += p.used - before;
     }
     if (valid) {
+      interval = { from: prev.at, at: sample.at, mb: delta };
       // 跨午夜的区间不能归为“今日”用量；不拆分或插值。
       if (dayKey(prev.at) === dayKey(sample.at)) events.push({ from: prev.at, at: sample.at, mb: delta });
       note = '今日区间增量 · 按采样时刻';
     } else { events = []; note = '计数回退，重新积累'; }
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
-  return { version: 1, session: sample.session, events, note,
+  const months = updateMonths(old.months, sample, prev, interval, note, old.events || []);
+  return { version: 1, session: sample.session, events, months, note,
     last: { at: sample.at, signature, packages: sample.packages }, data: sample };
 }
 
@@ -819,6 +915,14 @@ function createWidgetClass(DmYY) {
         + '\n\n仅统计接口明确归属这张卡的用量，缺失项显示 --，不代表整张卡的全部用量。');
     }
 
+    async showMonthlyUsage() {
+      await this.loadResult();
+      if (!this.result) return alertMessage('本月用量', this.failure || '请先成功查询一次套餐');
+      const view = new WebView();
+      await view.loadHTML(monthlyHTML(monthlyReport(this.result.history), this.result.stale));
+      await view.present();
+    }
+
     async memberDiagnostics() {
       await this.loadResult();
       const report = this.result && this.result.history.data.memberReport;
@@ -835,7 +939,7 @@ function createWidgetClass(DmYY) {
     }
 
     async clearHistory() {
-      const confirm = new Alert(); confirm.title = '清除历史？'; confirm.message = '只清除本组件的快照和用量图；QX Cookie 保留。';
+      const confirm = new Alert(); confirm.title = '清除历史？'; confirm.message = '清除本组件的快照、小时图及本月／上月日记录；QX Cookie 保留。';
       confirm.addDestructiveAction('清除'); confirm.addCancelAction('取消');
       if (await confirm.presentAlert() === 0) { this.store.clear(); this.result = null; }
     }
@@ -886,6 +990,7 @@ function createWidgetClass(DmYY) {
       this.registerAction({ title: '账户与数据', menu: [
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
+        action('flowMonthly', '本月用量', 'chart.bar.xaxis', '#8A73FF', () => this.showMonthlyUsage()),
         action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
         action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
         action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),

@@ -42,7 +42,7 @@ const UF_NUMBER_FONTS = {
   'SF Pro Light（细体）': 'system-light',
   'SF Pro Regular（常规）': 'system-regular',
   '系统等宽': 'system-mono',
-  'SF Mono Semibold（半粗体）': 'system-mono-semibold',
+  'SF Mono Medium（中等）': 'system-mono-medium',
   'Menlo': 'Menlo-Regular',
   'Helvetica Neue': 'HelveticaNeue',
   'Avenir Next 窄体': 'AvenirNextCondensed-Regular',
@@ -514,7 +514,7 @@ function numberFont(size) {
   const name = UF_NUMBER_FONTS[UF.numberFont];
   if (name === 'system-light') return Font.lightSystemFont(size);
   if (name === 'system-regular') return Font.regularSystemFont(size);
-  if (name === 'system-mono-semibold') return Font.semiboldMonospacedSystemFont(size);
+  if (name === 'system-mono-medium') return Font.mediumMonospacedSystemFont(size);
   if (name === 'system-mono') return Font.regularMonospacedSystemFont(size);
   if (name) {
     try { return new Font(name, size) || Font.systemFont(size); }
@@ -730,6 +730,10 @@ function createWidgetClass(DmYY) {
   return class UnicomFlowWidget extends DmYY {
     constructor(arg) {
       super(arg);
+      if (this.settings.numberFont === 'SF Mono Semibold（半粗体）') {
+        this.settings.numberFont = 'SF Mono Medium（中等）';
+        this.saveSettings(false);
+      }
       this.name = '联通流量';
       this.en = 'UnicomFlow';
       this.store = storage();

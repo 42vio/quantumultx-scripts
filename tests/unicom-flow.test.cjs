@@ -766,7 +766,10 @@ function distributionFixture() {
   assert.throws(()=>appApi.validateUpdateSource(source+'\nconst broken = ;'),/语法/);
   const path='/documents/联通流量.js';
   files.set(path,source);
-  await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'同步完成');
+  failScriptWrite=true; // 内容相同即使禁止写入也应直接提示，无需替换文件。
+  await instance.checkAndUpdateScript(); assert.equal(alerts.at(-1).title,'已是最新');
+  assert.equal(files.get(path),source);assert.match(alerts.at(-1).message,/无需更新/);
+  failScriptWrite=false;
   const beforeUpdateFiles=Array.from(files.keys()).sort();
   updateSource=source.replace(/^const UF_VERSION.*$/m,'')+'\n// changed content\n';
   const beforeAlerts=alerts.length;

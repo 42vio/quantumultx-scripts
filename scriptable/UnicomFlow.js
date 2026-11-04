@@ -1097,7 +1097,7 @@ function createWidgetClass(DmYY) {
         const fm = cloud ? FileManager.iCloud() : local;
         if (cloud) await fm.downloadFileFromiCloud(path);
         if (!fm.fileExists(path)) throw new Error('找不到当前脚本文件，已取消更新');
-        if (fm.readString(path) === source) return alertMessage('同步完成', '当前脚本已与仓库最新版一致。');
+        if (fm.readString(path) === source) return alertMessage('已是最新', '当前脚本与仓库内容一致，无需更新。');
         installUpdate(fm, path, source);
         await alertMessage('同步完成', '已同步仓库最新版，关闭配置页后重新运行即可。');
       } catch (error) {

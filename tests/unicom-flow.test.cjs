@@ -188,14 +188,14 @@ function distributionFixture() {
   class Color { constructor(hex) { this.hex = '#' + hex; } static white() { return new Color('FFFFFF'); } }
   class Rect { constructor(x,y,width,height) { Object.assign(this,{x,y,width,height}); } }
   class Size { constructor(width,height) { Object.assign(this,{width,height}); } }
-  class Path { addRoundedRect(rect, rx) { this.rect = rect; this.rx = rx; } }
+  class Path { addRoundedRect(rect, rx, ry) { this.rect = rect; this.rx = rx; this.ry = ry; } }
   class DrawContext {
     constructor() { this.parts=[]; }
     setFillColor(c) { this.fill=c.hex; } setTextColor(c) { this.text=c.hex; }
     setFont(f) { this.font=f; } setTextAlignedLeft() {this.centered=false;} setTextAlignedCenter() {this.centered=true;}
     fillRect(r) { this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${this.fill}"/>`); }
     addPath(p) { this.path=p; }
-    fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" fill="${this.fill}"/>`); }
+    fillPath() { const r=this.path.rect; this.parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${this.path.rx}" ry="${this.path.ry}" fill="${this.fill}"/>`); }
     drawTextInRect(t,r) { this.parts.push(`<text x="${this.centered?r.x+r.width/2:r.x}" y="${r.y+this.font.size}" text-anchor="${this.centered?'middle':'start'}" fill="${this.text}" font-family="${this.font.name || (this.font.mono?'Menlo,monospace':'sans-serif')}" font-weight="${this.font.weight||400}" font-size="${this.font.size}">${esc(t)}</text>`); }
     getImage() { assert.ok(this.parts.length); return `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width*3}" height="${this.size.height*3}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="card"><rect width="100%" height="100%" rx="20"/></clipPath></defs><g clip-path="url(#card)">${this.parts.join('')}</g></svg>`; }
   }
@@ -219,7 +219,7 @@ function distributionFixture() {
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
   assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.02GB'));
-  const sharedSegments=[...aligned.matchAll(/<rect x="20" y="([0-9.]+)" width="5" height="([0-9.]+)" fill="#[^"]+"/g)];
+  const sharedSegments=[...aligned.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="2.5" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
   assert.equal(sharedSegments.length,2);
   assert.ok(Math.abs(Number(sharedSegments[0][2])-37*1.2/120)<1e-8);
   assert.ok(Math.abs(Number(sharedSegments[1][2])-37*2.02/120)<1e-8);
@@ -229,14 +229,17 @@ function distributionFixture() {
   for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false],[12,120,4,7,false]]) {
     const edgeData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,used,total,members:[{id:'a',role:'主卡',used:main},{id:'b',role:'副卡',used:vice}]}:p),members:[]};
     const edgeSvg=visual.renderImage({history:{...history,data:edgeData},stale:false},true,338,158);
-    const bars=[...edgeSvg.matchAll(/<rect x="20" y="([0-9.]+)" width="5" height="([0-9.]+)" fill="#[^"]+"/g)];
+    const bars=[...edgeSvg.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="2.5" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
     assert.equal(bars.length,colored?2:0);
     for(const bar of bars) { assert.ok(Number(bar[1])>=34-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=71+1e-8); }
   }
 
-  const step=(338-40)/24;
+  const viceOnlyData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};
+  const viceOnly=visual.renderImage({history:{...history,data:viceOnlyData},stale:false},true,338,158);
+  assert.ok(/x="13" y="[0-9.]+" width="5" height="[0-9.]+" rx="2.5" ry="[0-9.]+" fill="#8A73FF"/.test(viceOnly));
+  const step=(338-26)/24;
   for(const hour of [0,6,12,18,23]) {
-    const expected=20+(hour+0.5)*step;
+    const expected=13+(hour+0.5)*step;
     const tick=aligned.match(new RegExp('<text x="([0-9.]+)"[^>]*text-anchor="middle"[^>]*>'+String(hour).padStart(2,'0')+'</text>'));
     assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
     assert.ok(aligned.includes(`x="${expected-0.25}" y="105"`));
@@ -248,7 +251,7 @@ function distributionFixture() {
     assert.ok(!image.includes('点击刷新')); assert.ok(/更新 \d{2}:\d{2}:\d{2}/.test(image));
     const textPositions=[...image.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"/g)];
     assert.ok(textPositions.length>=6);
-    assert.ok(textPositions.every(m=>Number(m[1])>=20&&Number(m[2])>=14&&Number(m[2])<=150));
+    assert.ok(textPositions.every(m=>Number(m[1])>=13&&Number(m[2])>=12&&Number(m[2])<=150));
   }
 
   for(const theme of ['黑色','白色']) {

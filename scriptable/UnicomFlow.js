@@ -526,7 +526,7 @@ function text(ctx, value, x, y, width, height, size, color = UF.text, mono = fal
 function roundedRect(ctx, x, y, w, h, radius, color) {
   if (w <= 0 || h <= 0) return;
   const path = new Path();
-  path.addRoundedRect(new Rect(x, y, w, h), radius, radius);
+  path.addRoundedRect(new Rect(x, y, w, h), Math.min(radius, w / 2), Math.min(radius, h / 2));
   ctx.setFillColor(new Color(color));
   ctx.addPath(path);
   ctx.fillPath();
@@ -552,8 +552,8 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
     if (c.complete && metric.used > 0 && metric.total > 0) {
       const scale = barH / Math.max(metric.total, c.main + c.vice);
       const mainHeight = c.main * scale, viceHeight = c.vice * scale;
-      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, barY + barH - mainHeight, barW, mainHeight)); }
-      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x, barY + barH - mainHeight - viceHeight, barW, viceHeight)); }
+      if (c.main > 0) roundedRect(ctx, x, barY + barH - mainHeight, barW, mainHeight, 2.5, UF.blue);
+      if (c.vice > 0) roundedRect(ctx, x, barY + barH - mainHeight - viceHeight, barW, viceHeight, 2.5, UF.purple);
     }
     const half = width / 2;
     roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
@@ -576,7 +576,7 @@ function renderImage(result, medium, width, height) {
   ctx.opaque = true;
   ctx.setFillColor(new Color(UF.bg));
   ctx.fillRect(new Rect(0, 0, width, height));
-  const data = result.history.data, pad = 20;
+  const data = result.history.data, pad = 13;
   const metrics = displayMetrics(data, UF.displayMode);
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
@@ -603,7 +603,7 @@ function renderImage(result, medium, width, height) {
     });
     [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
   } else {
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 14, width - 2 * pad, true);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, width - 2 * pad, true);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true);
   }
   const date = new Date(data.at);

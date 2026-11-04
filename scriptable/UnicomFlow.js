@@ -528,11 +528,12 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   roundedRect(ctx, x, barY, width, barH, 1.5, UF.track);
   if (metric && metric.composition) {
     const c = metric.composition;
-    // 彩条表示共享已用构成；有缺失或总数不一致时不推算成某张卡的流量。
-    if (c.complete && metric.used > 0) {
-      const mainWidth = width * c.main / (c.main + c.vice);
+    // 彩条按套餐总量分别表示主副卡已用量，未用部分保留灰色。超额时按已用构成缩放至条宽。
+    if (c.complete && metric.used > 0 && metric.total > 0) {
+      const scale = width / Math.max(metric.total, c.main + c.vice);
+      const mainWidth = c.main * scale, viceWidth = c.vice * scale;
       if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, barY, mainWidth, barH)); }
-      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + mainWidth, barY, width - mainWidth, barH)); }
+      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + mainWidth, barY, viceWidth, barH)); }
     }
     const half = width / 2;
     roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);

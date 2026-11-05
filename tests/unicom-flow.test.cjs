@@ -27,9 +27,9 @@ function distributionFixture() {
   cardFixture.viceCardLits=[{number:'13000000001',role:'main'}, {number:'13000000002',role:'vice'}];
   cardFixture.resources[0].details[0].viceCardlist=[{number:'13000000001',use:1.22*1024},{number:'13000000002',use:2*1024,currentLoginFlag:'1'}];
   const cards=parsePackages(cardFixture);
-  const c=api.displayMetrics(cards).left.composition;
+  const c=api.displayMetrics(cards).right.composition;
   assert.equal(c.complete,true);assert.equal(c.main,1.22*1024);assert.equal(c.vice,2*1024);
-  assert.equal(api.displayMetrics(cards).leftLabel,'共享流量');
+  assert.equal(api.displayMetrics(cards).leftLabel,'主卡独享');
   const compositionRows = [{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:12}];
   const composition = (members, used=12) => api.sharedComposition([{used,members}]);
   assert.equal(composition(compositionRows).complete,true); // 主卡为零，整条紫色
@@ -113,21 +113,21 @@ function distributionFixture() {
   assert.equal(capturedData.members[1].records.length,1); assert.equal(capturedData.members[1].records[0].used,3859.66);
   assert.equal(capturedData.categories.general.total,200*1024); // 成员明细不改写套餐池额度
   const capturedMetrics=api.displayMetrics(capturedData);
-  assert.equal(capturedMetrics.leftLabel,'共享流量');assert.equal(capturedMetrics.rightLabel,'主卡独享');
-  assert.equal(capturedMetrics.left.used,3.22*1024);assert.equal(capturedMetrics.right.used,8.81*1024);
+  assert.equal(capturedMetrics.leftLabel,'主卡独享');assert.equal(capturedMetrics.rightLabel,'共享流量');
+  assert.equal(capturedMetrics.right.used,3.22*1024);assert.equal(capturedMetrics.left.used,8.81*1024);
 
   const distribution=parsePackages(distributionFixture());
   assert.equal(distribution.categories.directed,null); // 两项均为通用，不冒充定向
   assert.equal(distribution.categories.general.total,200*1024);
   assert.ok(Math.abs(distribution.categories.general.used/1024-12.03)<1e-9);
   const split=api.displayMetrics(distribution);
-  assert.equal(split.leftLabel,'共享流量'); assert.equal(split.rightLabel,'主卡独享');
-  assert.equal(split.left.total,120*1024); assert.equal(split.right.total,80*1024);
-  assert.equal(formatMB(split.left.used),'3.2GB'); assert.equal(formatMB(split.right.used),'8.8GB');
+  assert.equal(split.leftLabel,'主卡独享'); assert.equal(split.rightLabel,'共享流量');
+  assert.equal(split.right.total,120*1024); assert.equal(split.left.total,80*1024);
+  assert.equal(formatMB(split.right.used),'3.2GB'); assert.equal(formatMB(split.left.used),'8.8GB');
   const insideResources=distributionFixture(); insideResources.resources[0].details.push(insideResources.unshared[0].details[0]);delete insideResources.unshared;
-  assert.equal(api.displayMetrics(parsePackages(insideResources)).right.total,80*1024); // 赠送包名称识别
+  assert.equal(api.displayMetrics(parsePackages(insideResources)).left.total,80*1024); // 赠送包名称识别
   const forced=parsePackages(fixture(),{[base.packages[0].id]:'shared',[base.packages[1].id]:'exclusive'});
-  assert.equal(api.displayMetrics(forced).rightLabel,'主卡独享');
+  assert.equal(api.displayMetrics(forced).leftLabel,'主卡独享');
   assert.equal(api.displayMetrics(base).leftLabel,'通用'); // 无可靠共享信息时不猜测
   const extra=distributionFixture();extra.mlresources=[{type:'flow',details:[{feePolicyId:'other',feePolicyName:'定向',total:1,use:0.01,remain:0.99}]}];
   assert.equal(api.displayMetrics(parsePackages(extra)).omitted,true);
@@ -210,50 +210,50 @@ function distributionFixture() {
   assert.equal(retainedCards.events.length,2);assert.equal(retainedCards.events[0].mb,90);
   assert.equal(retainedCards.events[1].mainMB,20);assert.equal(retainedCards.events[1].viceMB,10);
 
-  const packageIds=api.displayMetrics(cardNext.data);
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at+3600000),null);
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.rightIds,at+3600000),null);
-  assert.equal(api.todayPackageUsage(cardStart,packageIds.leftIds,at),null);
+  const {leftIds:exclusiveIds,rightIds:sharedIds}=api.displayMetrics(cardNext.data);
+  assert.equal(api.todayPackageUsage(cardNext,sharedIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(cardNext,exclusiveIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(cardStart,sharedIds,at),null);
   const noPackageHistory={...cardNext,events:cardNext.events.map(({packageDeltas,...event})=>event)};
-  assert.equal(api.todayPackageUsage(noPackageHistory,packageIds.leftIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(noPackageHistory,sharedIds,at+3600000),null);
   const zeroPackages=updateHistory(cardNext,cardSample(at+7200000,110,230,350));
-  assert.equal(api.todayPackageUsage({...zeroPackages,events:zeroPackages.events.slice(-1)},packageIds.leftIds,at+7200000),0); // 总增量为零时，各套餐也均为零
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at),null); // 不计未来事件
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,midnight),null); // 不计昨天
+  assert.equal(api.todayPackageUsage({...zeroPackages,events:zeroPackages.events.slice(-1)},sharedIds,at+7200000),0); // 总增量为零时，各套餐也均为零
+  assert.equal(api.todayPackageUsage(cardNext,sharedIds,at),null); // 不计未来事件
+  assert.equal(api.todayPackageUsage(cardNext,sharedIds,midnight),null); // 不计昨天
   assert.equal(api.todayPackageUsage(cardNext,[],at+3600000),null);
   const invalidPackages={...cardNext,events:cardNext.events.map(e=>({...e,mb:-1}))};
-  assert.equal(api.todayPackageUsage(invalidPackages,packageIds.leftIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(invalidPackages,sharedIds,at+3600000),null);
   for(const [value,expected] of [[6.8*1024,'6.8'],[0.53*1024,'0.53'],[0.001*1024,'<0.01'],[0,'0'],[null,'—']]) assert.equal(api.formatGB(value),expected);
   assert.equal(api.formatGB(120*1024,true),'120');assert.equal(api.formatGB(80.5*1024,true),'80.5');
   for(const [parameter,mode] of [['','month'],['month','month'],[' today ','today'],['TODAY','today'],['unknown','month']]) assert.equal(api.widgetMode(parameter),mode);
   assert.equal(formatMB(0.001,'daily'),'<0.1MB');
   const reusableStart=updateHistory(null,cardSample(at,0,200,300));
   const reusable=updateHistory(reusableStart,cardSample(at+3600000,0,230,350));
-  const reusableIds=api.displayMetrics(reusable.data);
-  assert.equal(api.todayPackageUsage(reusable,reusableIds.leftIds,at+3600000),30);
-  assert.equal(api.todayPackageUsage(reusable,reusableIds.rightIds,at+3600000),50);
+  const {leftIds:reusableExclusiveIds,rightIds:reusableSharedIds}=api.displayMetrics(reusable.data);
+  assert.equal(api.todayPackageUsage(reusable,reusableSharedIds,at+3600000),30);
+  assert.equal(api.todayPackageUsage(reusable,reusableExclusiveIds,at+3600000),50);
   const sharedUnknown={...reusable,events:reusable.events.map(e=>({...e,viceMB:20,unknownMB:10}))};
-  assert.equal(api.todayPackageUsage(sharedUnknown,reusableIds.leftIds,at+3600000),30);
-  assert.equal(api.todayPackageUsage(sharedUnknown,reusableIds.rightIds,at+3600000),50);
+  assert.equal(api.todayPackageUsage(sharedUnknown,reusableSharedIds,at+3600000),30);
+  assert.equal(api.todayPackageUsage(sharedUnknown,reusableExclusiveIds,at+3600000),50);
   assert.ok(!JSON.stringify(reusable).includes('packageDeltas'));
   const unchanged=updateHistory(reusable,cardSample(at+7200000,0,230,350));
-  assert.equal(api.todayPackageUsage(unchanged,reusableIds.leftIds,at+7200000),30); // 新增零区间不能覆盖旧的今日正用量
+  assert.equal(api.todayPackageUsage(unchanged,reusableSharedIds,at+7200000),30); // 新增零区间不能覆盖旧的今日正用量
   const reusedZero={...unchanged,events:unchanged.events.slice(-1)};
-  assert.equal(api.todayPackageUsage(reusedZero,reusableIds.leftIds,at+7200000),0);
+  assert.equal(api.todayPackageUsage(reusedZero,reusableSharedIds,at+7200000),0);
   const missingCardParts={...reusable,events:reusable.events.map(({mainMB,viceMB,unknownMB,...e})=>e)};
-  assert.equal(api.todayPackageUsage(missingCardParts,reusableIds.leftIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(missingCardParts,reusableSharedIds,at+3600000),null);
   const withRedundant={...reusable,events:reusable.events.map(e=>({...e,packageDeltas:[{id:'extra',mb:999}]}))};
   const cleaned=updateHistory(withRedundant,cardSample(at+7200000,0,230,350));
   assert.ok(!JSON.stringify(cleaned).includes('packageDeltas'));assert.equal(cleaned.events[0].mb,reusable.events[0].mb);
   assert.equal(api.todayPackageUsage(reusable,reusable.data.packages.map(p=>p.id),at+3600000),80);
   const mixedGroups={...reusable,data:{...reusable.data,packages:[...reusable.data.packages,{id:'directed',category:'directed',used:99}]}};
-  assert.equal(api.todayPackageUsage(mixedGroups,reusableIds.leftIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(mixedGroups,reusableSharedIds,at+3600000),null);
   const cardBuckets=todayBuckets(cardNext,at);
   assert.equal(cardBuckets[11].mainMB,60);assert.equal(cardBuckets[11].viceMB,30);
   const cardMonth=api.monthlyReport(cardNext,at);
   assert.equal(cardMonth.days[2].mainMB,60);assert.equal(cardMonth.days[2].viceMB,30);
   const unknownCard=updateHistory(cardStart,cardSample(at+3600000,110,230,350,false));
-  assert.equal(api.todayPackageUsage(unknownCard,packageIds.leftIds,at+3600000),null); // 归属不完整时不猜测
+  assert.equal(api.todayPackageUsage(unknownCard,sharedIds,at+3600000),null); // 归属不完整时不猜测
   assert.equal(unknownCard.events[0].mainMB,50);assert.equal(unknownCard.events[0].unknownMB,40);
   const memberRollback=updateHistory(cardStart,cardSample(at+3600000,90,250,350));
   assert.equal(memberRollback.events[0].mainMB,50);assert.equal(memberRollback.events[0].unknownMB,40);
@@ -512,7 +512,7 @@ function distributionFixture() {
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
   assert.ok(aligned.includes('主 1.2GB')); assert.ok(aligned.includes('副 2.0GB'));
-  const sharedSegments=[...aligned.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
+  const sharedSegments=[...aligned.matchAll(/<rect x="179" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
   assert.equal(sharedSegments.length,2);
   const quotaRects=[...aligned.matchAll(/<rect x="[0-9.]+" y="[0-9.]+" width="5" height="([0-9.]+)" rx="([0-9.]+)" ry="([0-9.]+)"/g)];
   assert.ok(quotaRects.length>=5);
@@ -525,19 +525,21 @@ function distributionFixture() {
   for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false],[12,120,4,7,false]]) {
     const edgeData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,used,total,members:[{id:'a',role:'主卡',used:main},{id:'b',role:'副卡',used:vice}]}:p),members:[]};
     const edgeSvg=visual.renderImage({history:{...history,data:edgeData},stale:false},true,338,158);
-    const bars=[...edgeSvg.matchAll(/<rect x="13" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
+    const bars=[...edgeSvg.matchAll(/<rect x="179" y="([0-9.]+)" width="5" height="([0-9.]+)" rx="[0-9.]+" ry="[0-9.]+" fill="#(?:0A94FF|8A73FF)"/g)];
     assert.equal(bars.length,colored?2:0);
     for(const bar of bars) { assert.ok(Number(bar[1])>=30-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=67+1e-8); }
   }
 
   const viceOnlyData={...previewData,at:visualAt,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};
   const viceOnly=visual.renderImage({history:{...history,data:viceOnlyData},stale:false},true,338,158);
-  assert.ok(/x="13" y="[0-9.]+" width="5" height="[0-9.]+" rx="[0-9.]+" ry="[0-9.]+" fill="#8A73FF"/.test(viceOnly));
+  assert.ok(/x="179" y="[0-9.]+" width="5" height="[0-9.]+" rx="[0-9.]+" ry="[0-9.]+" fill="#8A73FF"/.test(viceOnly));
   fs.writeFileSync(output+'/small-zero.svg',visual.renderImage({history:{...history,data:viceOnlyData},stale:false},false,158,158));
   fs.writeFileSync(output+'/medium-zero.svg',viceOnly);
   assert.ok(!viceOnly.includes('NaN'));assert.ok(!viceOnly.includes('主 0MB'));assert.ok(!viceOnly.includes('副 3.2GB'));
   const incompleteShared={...viceOnlyData,packages:viceOnlyData.packages.map(p=>p.shared?{...p,used:p.used+20}:p)};
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('主 0MB'));
+  assert.ok(aligned.indexOf('主卡独享')<aligned.indexOf('共享流量'));
+  assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('逐卡明细未补全'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
   // 今日图例整组靠右，两行本身左对齐。
   const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
@@ -578,6 +580,7 @@ function distributionFixture() {
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
+    assert.ok(todayImage.indexOf('主卡独享 · 今日')<todayImage.indexOf('共享流量 · 今日'));
     assert.ok(todayImage.includes('>30.0</text>'));assert.ok(todayImage.includes('>50.0</text>'));
     assert.ok(todayImage.includes('>0.22/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
     assert.ok(!/>[^<]*%[^<]*<\/text>/.test(todayImage));assert.ok(!todayImage.includes('本月'));

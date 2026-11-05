@@ -116,7 +116,7 @@ function displayMetrics(data) {
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
-    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '共享流量', rightLabel: '主卡独享', omitted, leftIds: shared.map(p => p.id), rightIds: exclusive.map(p => p.id) };
+    return { left: sumPackages(exclusive), right: { ...sumPackages(shared), composition }, leftLabel: '主卡独享', rightLabel: '共享流量', omitted, leftIds: exclusive.map(p => p.id), rightIds: shared.map(p => p.id) };
   }
   return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false,
     leftIds: data.packages.filter(p => p.category === 'general').map(p => p.id),
@@ -971,7 +971,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
   }
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
-  const incomplete = metrics.left && metrics.left.composition && !metrics.left.composition.complete;
+  const incomplete = [metrics.left, metrics.right].some(metric => metric && metric.composition && !metric.composition.complete);
   const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击右上角重试`
     : incomplete ? '逐卡明细未补全 · 暂不分色' : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
   const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`

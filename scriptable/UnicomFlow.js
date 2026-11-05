@@ -1305,7 +1305,7 @@ function makeWidget(result, medium, mode = 'month') {
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
-  if (medium) widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics`;
+  widget.url = medium ? `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics` : 'scriptable:///';
 
   return widget;
 }
@@ -1318,7 +1318,7 @@ function errorWidget(message, medium = false) {
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
-  if (medium) widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics`;
+  widget.url = medium ? `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics` : 'scriptable:///';
   return widget;
 }
 

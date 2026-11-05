@@ -902,7 +902,7 @@ function distributionFixture() {
   assert.equal(twentyPast.fromCache,true);assert.equal(cacheQueries,1);assert.equal(twentyPast.history.data.at,successAt);assert.equal(twentyPast.history.queryTimes.length,1);
   const cachedWidget=cacheApis[1].makeWidget(twentyPast,true);
   const mediumTapURL=new URL(cachedWidget.url);assert.equal(mediumTapURL.searchParams.get('scriptName'),'联通流量');assert.equal(mediumTapURL.searchParams.get('ufAction'),'statistics');
-  assert.equal(cacheApis[1].makeWidget(twentyPast,false).url,undefined);
+  assert.equal(cacheApis[1].makeWidget(twentyPast,false).url,'scriptable:///');
 
   assert.equal(cachedWidget.refreshAfterDate.getTime(),deadline); // 10:20读取仍建议10:30，不能变10:50
   // 独立设置组件和请求间隔：缓存读取不改查询时间，按较早期限建议运行。

@@ -662,17 +662,22 @@ function successfulQueryTimes(history, at) {
       && (!Number.isFinite(history.queryLogClearedAt) || time > history.queryLogClearedAt)).sort((a, b) => a - b);
 }
 
-function refreshRecords(history, at = Date.now()) {
+function refreshRecords(history, at = Date.now(), executions = []) {
   const times = successfulQueryTimes(history, at);
   const rows = times.map((time, index) => ({ at: time, interval: index ? time - times[index - 1] : null }))
     .filter(row => row.at >= at - 86400000);
   const intervals = rows.map(row => row.interval).filter(value => value != null);
-  return { rows: rows.reverse(), count: rows.length,
+  const recent = executions.filter(entry => Number.isFinite(entry.at) && entry.at <= at && entry.at >= at - 86400000);
+  const entries = rows.map(row => ({ ...row, state: 'query', source: 'unknown',
+    ...recent.find(entry => entry.state === 'query' && entry.at === row.at) }))
+    .concat(recent.filter(entry => entry.state !== 'query')).sort((a, b) => b.at - a.at);
+  return { rows: rows.reverse(), entries, count: rows.length,
+    cached: recent.filter(entry => entry.state === 'cache').length, failed: recent.filter(entry => entry.state === 'failed').length,
     average: intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : null,
     longest: intervals.length ? Math.max(...intervals) : null };
 }
 
-function statisticsReports(history, at = Date.now()) {
+function statisticsReports(history, at = Date.now(), executions = []) {
   // 只在打开页面时生成可选日期／月份的数据，不写入历史或复制保存每日累计。
   const hours = hourlyReport(history, at), month = monthlyReport(history, at), year = yearlyReport(history, at);
   const earliest = new Date(at); earliest.setHours(0,0,0,0); earliest.setDate(earliest.getDate()-6);
@@ -686,7 +691,7 @@ function statisticsReports(history, at = Date.now()) {
   for (const key of Object.keys(history.months || {}).sort()) {
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(key) && key >= year.days[0].key && key < month.month) months[key] = monthlyReport(history, at, key);
   }
-  return { hours, month, year, dates, months, refresh: refreshRecords(history, at) };
+  return { hours, month, year, dates, months, refresh: refreshRecords(history, at, executions) };
 }
 
 function previewHTML(images, sizes, mode = 'month', stale = false) {
@@ -715,19 +720,19 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   .period-picker{display:grid;grid-template-columns:36px minmax(0,1fr) 36px;align-items:center;gap:6px;margin-bottom:10px}.period-picker button{height:36px;border:0;border-radius:12px;background:var(--soft);font-size:22px}.period-picker button:disabled{opacity:.3}.period-picker select{width:100%;min-width:0;height:36px;border:1px solid var(--line);border-radius:12px;padding:0 12px;color:var(--text);background:var(--surface);font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center}.period-picker select:disabled{opacity:1}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:15px 16px}.period-label{font-size:13px;color:var(--muted)}.total{margin:6px 0 8px;font-variant-numeric:tabular-nums;letter-spacing:-1px;font-size:36px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
   h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.chart-meta{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin:12px 0 8px}.chart-max{font-size:11px;white-space:nowrap;color:var(--muted)}.chart-max strong{font-weight:500;color:var(--text);margin-left:5px;font-variant-numeric:tabular-nums}.legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:14px;font-size:11px;color:var(--muted);margin-left:auto}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
-  .scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.chart{display:flex;align-items:stretch;gap:5px;height:180px;padding:8px 3px 3px;background:repeating-linear-gradient(to bottom,var(--line) 0,var(--line) 1px,transparent 1px,transparent 70px);background-size:100% 141px;background-position:0 10px;background-repeat:no-repeat}.bar{flex:1;min-width:14px;padding:0 1px;border:0;background:transparent;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;gap:9px}.fill{display:flex;flex-direction:column-reverse;overflow:hidden;width:100%;border-radius:4px 4px 1px 1px;background:var(--purple)}.fill.missing{background:#${UF.track}}.fill.future{background:transparent}.segment{display:block;width:100%;flex-shrink:0}.tick{height:18px;min-width:18px;padding:2px 4px;line-height:14px;border-radius:6px;font-size:10px;color:var(--muted);white-space:nowrap}.bar.selected .tick{background:var(--blue);color:#fff;font-weight:600}.chart-foot{margin-top:10px;line-height:1.6;font-size:11px;color:var(--muted)}
+  .scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.chart{display:flex;align-items:stretch;gap:5px;height:180px;padding:8px 3px 3px;background:repeating-linear-gradient(to bottom,var(--line) 0,var(--line) 1px,transparent 1px,transparent 56px);background-size:100% 113px;background-position:0 38px;background-repeat:no-repeat}.bar{flex:1;min-width:14px;padding:0 1px;border:0;background:transparent;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;gap:9px}.fill{display:flex;flex-direction:column-reverse;overflow:hidden;width:100%;border-radius:4px 4px 1px 1px;background:var(--purple)}.fill.missing{background:#${UF.track}}.fill.future{background:transparent}.segment{display:block;width:100%;flex-shrink:0}.tick{height:18px;min-width:18px;padding:2px 4px;line-height:14px;border-radius:6px;font-size:10px;color:var(--muted);white-space:nowrap}.bar.selected .tick{background:var(--blue);color:#fff;font-weight:600}.chart-foot{margin-top:10px;line-height:1.6;font-size:11px;color:var(--muted)}
   .selected-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.selected-value{font-size:21px;font-weight:500;letter-spacing:-.4px}.selected-cards{display:flex;flex-wrap:wrap;gap:14px;margin:13px 0;font-size:13px}.detail{border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}.status-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--muted)}
   .table-card{padding:18px 0 0;overflow:hidden}.table-card .card-head{padding:0 18px 14px}table{width:100%;min-width:545px;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:right;border-top:1px solid var(--line);padding:13px 12px;white-space:nowrap;font-size:12px}th{font-size:11px;font-weight:400;color:var(--muted);background:var(--soft)}th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:1;background:var(--surface);padding-left:18px}th:first-child{background:var(--soft)}td:last-child{color:var(--muted);font-size:11px}tr.selected td{background:#${soft}}.date{border:0;padding:3px 0;background:none;color:var(--text);font-size:12px}tr.selected .date{color:var(--blue)}
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
   .records-details>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 18px 18px;list-style:none;font-size:15px;font-weight:600}.records-details>summary::-webkit-details-marker{display:none}.records-details>summary .hint{margin-left:auto;font-weight:400}.records-details>summary::after{content:"›";font-size:22px;color:var(--muted);transform:rotate(90deg)}.records-details[open]>summary::after{transform:rotate(-90deg)}
   .hero .totals{margin-top:10px;gap:8px}.hero .mini{padding:8px 10px}.hero .mini strong{font-size:18px;margin-top:3px}.hero .coverage{line-height:1.4}.hero .range-note{margin-top:6px}.badge:not(.cached){display:none}
-  .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.refresh-summary .mini{padding:12px 9px}.refresh-summary strong{font-size:17px;overflow-wrap:anywhere}.refresh-table{min-width:0}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
+  .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.refresh-summary .mini{padding:12px 9px}.refresh-summary strong{font-size:17px;overflow-wrap:anywhere}.refresh-table{min-width:480px}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
   </style></head><body><main class="shell">
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
     <section class="card"><div class="card-head"><h2>最近24小时</h2><span class="hint">成功查询</span></div><div class="refresh-summary"><div class="mini"><div class="mini-label">请求次数</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><p class="refresh-note">间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔包含上一条位于24小时外的记录（如有）。</p></section>
-    <section class="card table-card"><div class="card-head"><h2>请求时间</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><table class="refresh-table"><thead><tr><th>成功时间</th><th>距上次成功</th></tr></thead><tbody id="refresh-rows"></tbody></table><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无成功查询</div></section>
-    <p class="refresh-note">只记录成功获取联通数据的时间，读取缓存及失败请求不计入。仅保存最近7天的时间戳，不保存接口原文；升级前的记录复用已有采样区间起止时间，缺失记录无法补齐。页面展示打开时的快照，切换页面不会发起请求。</p>
+    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
+    <p class="refresh-note" id="refresh-execution-summary"></p><p class="refresh-note">来源及执行结果从新版开始记录，旧成功记录标为来源未知。命中缓存表示脚本执行但未请求联通，不代表iOS是否重绘。日志最多保留7天、2000条，不保存Cookie或接口原文；切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
   <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">单日</button><button class="tab" id="tab-month" type="button">单月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
@@ -784,8 +789,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
       if(key==='hours'&&!recorded)el('coverage').textContent=(report.month===reports.hours.month?'今日':'所选日期')+'暂无有效采样 · 未补零';
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
-      // 最高柱占绘图区约85%，与顶部网格线留出稳定间距。
-      const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak?peak/0.85:1;
+      // 最高柱保持完整高度；参考线位于峰值下方，不画高于峰值的顶线。
+      const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
       el('chart-max-value').textContent=amount(report.days.some(d=>!d.future&&d.mb!=null)?peak:null);
       for(const d of report.days){
         const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
@@ -807,15 +812,25 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     const queryLog=reports.refresh||{rows:[],count:0,average:null,longest:null};
     const duration=ms=>ms==null?'—':ms<60000?Math.max(1,Math.round(ms/1000))+'秒':(Math.round(ms/6000)/10)+'分钟';
     el('refresh-count').textContent=queryLog.count+'次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
-    el('refresh-empty').hidden=queryLog.rows.length>0;
+    const executionRows=queryLog.entries||queryLog.rows;
+    el('refresh-empty').hidden=executionRows.length>0;
+    el('refresh-execution-summary').textContent='实际查询成功 '+queryLog.count+' 次 · 使用缓存 '+(queryLog.cached||0)+' 次 · 执行失败 '+(queryLog.failed||0)+' 次。上方平均与最长间隔仅计算成功查询。';
     el('clear-refresh-records').onclick=()=>{location.href='unicomflow://clear-refresh-records';};
-    for(const item of queryLog.rows){const row=document.createElement('tr'),time=document.createElement('td'),gap=document.createElement('td');time.textContent=clock(item.at,true);gap.textContent=duration(item.interval);row.append(time,gap);el('refresh-rows').append(row);}
+    const sourceName=source=>source&&source.startsWith('widget-')?'小组件 · '+(source.includes('-small-')?'小号':'中号')+' · '+(source.endsWith('-today')?'今日':'当月')
+      :({script:'运行脚本',preview:'组件预览',statistics:'用量统计',manual:'手动刷新',connection:'连接检查',diagnostics:'成员检查'})[source]||'来源未知';
+    for(const item of executionRows){
+      const row=document.createElement('tr'),time=document.createElement('td'),source=document.createElement('td'),status=document.createElement('td'),gap=document.createElement('td');
+      time.textContent=clock(item.at,true);source.textContent=sourceName(item.source);
+      status.textContent=item.state==='cache'?'使用缓存 · 未请求联通':item.state==='failed'?'执行失败':item.reason==='forced'?'查询成功 · 强制':item.reason==='midnight'?'查询成功 · 跨日':item.reason==='no-cache'?'查询成功 · 无缓存':'查询成功';
+      gap.textContent=item.state==='cache'||item.state==='failed'?'—':duration(item.interval);
+      row.append(time,source,status,gap);el('refresh-rows').append(row);
+    }
     let showingRefresh=false, usageScroll=0;
     el('refresh-records-toggle').onclick=()=>{
       if(!showingRefresh)usageScroll=typeof scrollY==='number'?scrollY:0;
       showingRefresh=!showingRefresh;el('refresh-records').hidden=!showingRefresh;el('usage-content').hidden=showingRefresh;
       el('refresh-records-toggle').textContent=showingRefresh?'返回统计':'刷新记录';el('refresh-records-toggle').setAttribute('aria-expanded',String(showingRefresh));
-      el('page-title').textContent=showingRefresh?'刷新记录':'用量统计';el('page-subtitle').textContent=showingRefresh?'联通数据 · 成功查询时间':'采样记录 · 非运营商账单';
+    el('page-title').textContent=showingRefresh?'刷新记录':'用量统计';el('page-subtitle').textContent=showingRefresh?'执行来源 · 查询与缓存':'采样记录 · 非运营商账单';
       if(typeof scrollTo==='function')scrollTo(0,showingRefresh?0:usageScroll);
     };
     // 禁止双击缩放，但不拦截 touchmove，保留图表和表格的正常滚动。
@@ -898,7 +913,7 @@ function storage() {
       visit(dir);
       return { files, kb: files.every(file => Number.isFinite(file.kb)) ? files.reduce((sum, file) => sum + file.kb, 0) : null };
     },
-    clear() { this.remove('history'); },
+    clear() { this.remove('history'); this.remove('refresh-log'); },
   };
 }
 
@@ -967,13 +982,32 @@ function pauseQuery(ms) {
   return new Promise(resolve => Timer.schedule(ms, false, resolve));
 }
 
-async function refresh(store, force = false) {
+async function refresh(store, force = false, source = 'script') {
+  const saveExecution = (state, result) => {
+    const now = Date.now(), dataAt = result && result.history.data.at;
+    const entry = { at: state === 'query' ? dataAt : now, source, state, forced: force,
+      ...(result && result.reason ? { reason: result.reason } : {}),
+      ...(Number.isFinite(dataAt) ? { dataAt } : {}) };
+    // 独立轻量日志，缓存命中不重写整份流量历史；限制保留时间与条数。
+    const log = (store.read('refresh-log', []) || []).filter(item => Number.isFinite(item.at) && item.at >= now - 7 * 86400000 && item.at <= now);
+    log.push(entry); store.write('refresh-log', log.slice(-2000));
+  };
+  let result;
+  try { result = await queryWithCache(store, force); }
+  catch (error) { try { saveExecution('failed'); } catch (_) {} throw error; }
+  try { saveExecution(result.fromCache ? 'cache' : 'query', result); } catch (_) {}
+  return result;
+}
+
+async function queryWithCache(store, force = false) {
   const started = Date.now();
   // 每次核对当前 Cookie，避免缓存命中后掩盖换号；仅联通查询共用缓存。
   const cookie = await readCookie(), session = sessionTag(cookie);
   const previous = store.read('history', null);
   if (previous && previous.session !== session) store.clear();
   if (!force && reusableHistory(previous, session, Date.now())) return { history: previous, stale: false, error: '', fromCache: true };
+  const reason = force ? 'forced' : previous && previous.session === session && previous.data
+    ? dayKey(previous.data.at) !== dayKey(Date.now()) ? 'midnight' : 'interval' : 'no-cache';
   const owner = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
   let waited = false;
   // 临时请求锁只存标识和过期时间，不保存 Cookie；查询结束删除，异常退出后30秒失效。
@@ -993,7 +1027,7 @@ async function refresh(store, force = false) {
       const sample = { ...data, at: Date.now(), session };
       const history = updateHistory(store.read('history', null), sample);
       store.write('history', history);
-      return { history, stale: false, error: '', fromCache: false };
+      return { history, stale: false, error: '', fromCache: false, reason };
     } finally {
       if ((store.read('query-lock', {}) || {}).owner === owner) store.remove('query-lock');
     }
@@ -1132,11 +1166,16 @@ function renderImage(result, medium, width, height, mode = 'month') {
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false, today, daily[1]);
     const chartX = pad, chartY = 99 - chartLift, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const currentSlot = today ? new Date(now).getHours() : new Date(now).getDate() - 1;
-    const cell = chartW / buckets.length, max = Math.max(1, ...buckets.slice(0,currentSlot+1).map(b => b.mb));
+    const visibleBuckets = buckets.slice(0, currentSlot + 1);
+    const peak = Math.max(0, ...visibleBuckets.map(bucket => bucket.mb));
+    const cell = chartW / buckets.length, max = Math.max(1, peak);
     const markers = today ? [0, 6, 12, 18, 23] : [0, 4, 9, 14, 19, 24, buckets.length - 1];
     const minimumBar = 1.5;
     text(ctx, today ? '小时用量' : '每日用量',
-      chartX, 84 - chartLift, chartW - 80, 12, 8, UF.muted);
+      chartX, 84 - chartLift, chartW - 110, 12, 8, UF.muted);
+    const peakLabel = visibleBuckets.some(bucket => bucket.samples)
+      ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
+    text(ctx, `MAX ${peakLabel}`, chartX + chartW - 110, 84 - chartLift, 110, 12, 8, UF.muted, false, 'right');
     buckets.forEach((bucket, slot) => {
       const center = chartX + (slot + 0.5) * cell;
       const barWidth = Math.max(1, cell - 4.5);
@@ -1329,14 +1368,14 @@ function createWidgetClass(DmYY) {
       }
     }
 
-    async loadResult(force = false) {
+    async loadResult(force = false, source = config.runsInWidget ? `widget-${this.widgetFamily}-${this.flowMode}` : 'script') {
       this.result = null;
       this.failure = '';
       try {
         this.applySettings();
         const saved = this.store.read('history', null), migrated = migrateSmallCrossDays(saved);
         if (migrated !== saved) this.store.write('history', migrated);
-        this.result = await refresh(this.store, force);
+        this.result = await refresh(this.store, force, source);
       }
       catch (error) {
         this.failure = error.message || '查询失败';
@@ -1357,7 +1396,7 @@ function createWidgetClass(DmYY) {
     async renderMedium() { this.widgetFamily = 'medium'; return this.render(); }
 
     async showPreview() {
-      await this.loadResult();
+      await this.loadResult(false, 'preview');
       if (!this.result) return alertMessage('组件预览', this.failure || '请先成功查询一次套餐');
       const sizes = { small: widgetSize(false), medium: widgetSize(true) }, images = {};
       for (const mode of ['month', 'today']) {
@@ -1411,15 +1450,15 @@ function createWidgetClass(DmYY) {
     }
 
     async refreshFromQX() {
-      await this.loadResult(true);
+      await this.loadResult(true, 'manual');
       await alertMessage(this.failure ? '刷新未完成' : '刷新完成', this.failure || '已读取 QX 保存的 Cookie 并查询最新流量数据，共享记录已更新。桌面组件的重绘时间由 iOS 决定。');
     }
 
     async showUsageStatistics(showRefresh = false) {
-      await this.loadResult();
+      await this.loadResult(false, 'statistics');
       if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
       const view = new WebView();
-      await view.loadHTML(statisticsHTML(statisticsReports(this.result.history), this.result.stale, 'hours', showRefresh));
+      await view.loadHTML(statisticsHTML(statisticsReports(this.result.history, Date.now(), this.store.read('refresh-log', [])), this.result.stale, 'hours', showRefresh));
       let clearing = false;
       const stale = this.result.stale;
       view.shouldAllowRequest = request => {
@@ -1429,7 +1468,7 @@ function createWidgetClass(DmYY) {
           this.clearHistoryPart('refresh').then(async cleared => {
             if (!cleared) return;
             const history = this.store.read('history', null);
-            if (history && history.data) await view.loadHTML(statisticsHTML(statisticsReports(history), stale, 'hours', true));
+            if (history && history.data) await view.loadHTML(statisticsHTML(statisticsReports(history, Date.now(), this.store.read('refresh-log', [])), stale, 'hours', true));
           }).catch(error => alertMessage('清除未完成', error.message || '请重试')).finally(() => { clearing = false; });
         }
         return false;
@@ -1438,7 +1477,7 @@ function createWidgetClass(DmYY) {
     }
 
     async memberDiagnostics() {
-      await this.loadResult();
+      await this.loadResult(false, 'diagnostics');
       const report = this.result && this.result.history.data.memberReport;
       if (!report) return alertMessage('成员字段检查', this.failure || '尚无结构报告，请先刷新数据');
       const a = new Alert(); a.title = '成员字段检查';
@@ -1448,14 +1487,14 @@ function createWidgetClass(DmYY) {
     }
 
     async connectionStatus() {
-      await this.loadResult(true);
+      await this.loadResult(true, 'connection');
       await alertMessage('连接检查', this.failure || `QX Cookie：已读取\n套餐接口：成功\n识别流量包：${this.result.history.data.packages.length}\n${this.result.history.data.warnings.join('\n')}\n\nCookie 未写入文件或日志。`);
     }
 
     async clearHistoryPart(part, scope = null) {
       const descriptions = {
         snapshot: ['最新套餐快照', '清除最新套餐数据及增量计算基线，下次查询重新建立基线；这段间隔的用量不再计算。保留已有短期采样、每日用量记录及刷新记录。'],
-        refresh: ['刷新记录', '仅清除成功查询时间和间隔统计，保留用量记录及最新套餐数据。旧采样时间不会重新出现在刷新记录中。'],
+        refresh: ['刷新记录', '清除查询时间、触发来源、缓存及失败执行记录和间隔统计，保留用量记录及最新套餐数据。旧采样时间不会重新出现在刷新记录中。'],
         hours: ['小时用量记录', '清除最近7天采样区间，单日小时图及今日用量将从后续采样重新积累。保留刷新记录、每日用量记录及最新套餐数据。'],
         months: ['每日用量记录', '清除近12个月每日用量记录和跨日记录，单月及月度趋势从后续采样重新积累。保留小时用量记录、刷新记录及最新套餐数据。'],
         all: ['全部历史', '清除最新套餐快照、小时用量记录、每日用量记录及刷新记录，下次查询重新建立基线。'],
@@ -1473,6 +1512,7 @@ function createWidgetClass(DmYY) {
       confirm.addDestructiveAction('清除'); confirm.addCancelAction('取消');
       if (await confirm.presentAlert() !== 0) return;
       const history = this.store.read('history', null);
+      if (part === 'refresh') this.store.remove('refresh-log');
       if (part === 'all') this.store.clear();
       else if (history) {
         // 删除小时明细前保留可恢复的查询时间，两个功能可独立清理。
@@ -1519,7 +1559,7 @@ function createWidgetClass(DmYY) {
       const size = kb => !Number.isFinite(kb) ? '无法读取' : kb >= 1024 ? (kb / 1024).toFixed(2) + ' MB' : kb.toFixed(2) + ' KB';
       const choices = [
         ['snapshot', '最新套餐快照', `${history.data ? '1 份' : '暂无'} · 套餐显示及下次增量计算的基线`, 'doc.text'],
-        ['refresh', '刷新记录', `${successfulQueryTimes(history, Date.now()).length} 条 · 最近7天的成功查询时间`, 'clock.arrow.circlepath'],
+        ['refresh', '刷新记录', `${successfulQueryTimes(history, Date.now()).length} 条成功查询 · 最近7天；另记触发来源及缓存结果`, 'clock.arrow.circlepath'],
         ['hours', '小时用量记录', `${(history.events || []).length} 段 · 保留最近7天，用于单日统计及今日用量；按查询区间记录，非每小时一条`, 'chart.bar.xaxis'],
         ['months', '每日用量记录', `${months.length} 个月 · ${months.reduce((n, month) => n + Object.keys(month.days || {}).length, 0)} 天 · 保留最近12个月，用于单月统计及月度趋势`, 'calendar'],
         ['all', '全部历史', '包含最新套餐快照及全部统计记录', 'trash'],
@@ -1658,7 +1698,7 @@ function createWidgetClass(DmYY) {
       ] });
       this.registerAction({ title: '维护', menu: [
         action('flowReload', '重载组件', 'arrow.triangle.2.circlepath', '#007AFF', () => this.reopenScript()),
-        action('flowClear', '数据存储明细', 'internaldrive', '#8E8E93', () => this.clearHistory()),
+        action('flowClear', '数据存储', 'internaldrive', '#007AFF', () => this.clearHistory()),
         action('flowAdvanced', '高级设置', 'gearshape.fill', '#8E8E93', () => this.advancedSettings()),
       ] });
     }
@@ -1677,7 +1717,7 @@ async function refreshWithFeedback(instance, medium) {
   const closed = view.present().catch(() => {});
   try {
     instance.widgetFamily = medium ? 'medium' : 'small';
-    await instance.loadResult(true);
+    await instance.loadResult(true, 'manual');
     if (instance.result && !instance.result.stale) instance.result.manualRefresh = true;
     const widget = instance.result ? makeWidget(instance.result, medium, instance.flowMode) : errorWidget(instance.failure, medium);
     Script.setWidget(widget);

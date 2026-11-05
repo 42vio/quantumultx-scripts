@@ -535,7 +535,7 @@ function distributionFixture() {
 
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入所选月份合计'));
-  assert.equal(elements.get('chart').children[2].children[0].style.height,'119px');
+  assert.equal(elements.get('chart').children[2].children[0].style.height,'140px');
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
   assert.ok(Math.abs(parseFloat(stackedMonth[0].style.height)-60/90*100)<1e-8);
@@ -579,6 +579,15 @@ function distributionFixture() {
   assert.equal(elements.get('refresh-count').textContent,'2次');assert.equal(elements.get('refresh-average').textContent,'720分钟');
   assert.equal(elements.get('refresh-longest').textContent,'1320分钟');assert.equal(elements.get('refresh-rows').children.length,2);
   assert.equal(elements.get('refresh-empty').hidden,true);
+  const executionReport=api.refreshRecords(queryHistory,logAt,[
+    {at:logAt-3600000,source:'manual',state:'query',reason:'forced'},
+    {at:logAt-1800000,source:'widget-small-today',state:'cache'},
+    {at:logAt-1000000,source:'connection',state:'failed'}]);
+  elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:executionReport}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('refresh-count').textContent,'2次');assert.equal(elements.get('refresh-rows').children.length,4);
+  assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='小组件 · 小号 · 今日'&&row.children[2].textContent==='使用缓存 · 未请求联通'&&row.children[3].textContent==='—'));
+  assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='手动刷新'&&row.children[2].textContent==='查询成功 · 强制'));
+
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:{rows:[],count:0,average:null,longest:null}}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('refresh-empty').hidden,false);assert.equal(elements.get('refresh-average').textContent,'—');
 
@@ -701,10 +710,12 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158,'today');
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
+  assert.ok(dayImage.includes('>MAX —</text>'));assert.ok(zeroImage.includes('>MAX 0 MB</text>'));
   assert.ok(dayImage.includes('>小时用量</text>'));assert.ok(dayImage.includes('>主卡</text>'));assert.ok(dayImage.includes('>副卡</text>'));
   assert.ok(zeroImage.includes('>主卡</text>'));assert.ok(zeroImage.includes('>副卡</text>'));
   assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
   const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158,'today');
+  assert.ok(unknownImage.includes('text-anchor="end"'));assert.ok(unknownImage.includes('>MAX 10 MB</text>'));
   assert.ok(unknownImage.includes('>主卡</text>'));assert.ok(unknownImage.includes('>副卡</text>'));
 
 
@@ -841,11 +852,18 @@ function distributionFixture() {
     async loadString(){cacheQueries++;cacheNow++;if(cacheFailure)throw new Error('offline');return JSON.stringify(fixture());}
   }
   const sharedFiles=new Map();
-  const cacheStore={read:(key,fallback)=>sharedFiles.has(key)?JSON.parse(sharedFiles.get(key)):fallback,write:(key,value)=>sharedFiles.set(key,JSON.stringify(value)),remove:key=>sharedFiles.delete(key),clear:()=>sharedFiles.delete('history')};
+  const cacheStore={read:(key,fallback)=>sharedFiles.has(key)?JSON.parse(sharedFiles.get(key)):fallback,write:(key,value)=>sharedFiles.set(key,JSON.stringify(value)),remove:key=>sharedFiles.delete(key),clear:()=>{sharedFiles.delete('history');sharedFiles.delete('refresh-log');}};
   const cacheApis=await Promise.all(Array.from({length:4},()=>load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest})));
-  const together=await Promise.all(cacheApis.map(api=>api.refresh(cacheStore)));
+  const together=await Promise.all(cacheApis.map((api,index)=>api.refresh(cacheStore,false,['widget-small-month','widget-medium-month','widget-small-today','widget-medium-today'][index])));
   assert.equal(cacheQueries,1);assert.equal(cookieChecks,4);assert.equal(together.filter(r=>!r.fromCache).length,1);
   assert.equal(sharedFiles.has('query-lock'),false);
+  const initialExecutions=cacheStore.read('refresh-log');assert.equal(initialExecutions.length,4);
+  assert.equal(initialExecutions.filter(item=>item.state==='query').length,1);assert.equal(initialExecutions.filter(item=>item.state==='cache').length,3);
+  assert.ok(initialExecutions.every(item=>item.source.startsWith('widget-')));
+  const initialExecutionReport=cacheApis[0].refreshRecords(cacheStore.read('history'),cacheNow,initialExecutions);
+  assert.equal(initialExecutionReport.count,1);assert.equal(initialExecutionReport.cached,3);assert.equal(initialExecutionReport.entries.length,4);
+  assert.ok(initialExecutionReport.entries.filter(item=>item.state==='cache').every(item=>item.interval==null));
+
   const successAt=together[0].history.data.at, deadline=successAt+30*60000;
   cacheNow=successAt+20*60000;
   const twentyPast=await cacheApis[1].refresh(cacheStore);
@@ -874,16 +892,19 @@ function distributionFixture() {
   assert.equal(migratedInterval.settings.dataRequestMinutes,'45');
   assert.equal(intervalApi.queryDeadline(twentyPast.history),successAt+45*60000);
   const beforeManual=cacheQueries;
-  const manual=await cacheApis[2].refresh(cacheStore,true);
+  const manual=await cacheApis[2].refresh(cacheStore,true,'manual');
+  assert.equal(cacheStore.read('refresh-log').at(-1).source,'manual');assert.equal(cacheStore.read('refresh-log').at(-1).reason,'forced');
   assert.equal(cacheQueries,beforeManual+1);assert.equal(manual.fromCache,false);assert.ok(manual.history.data.at>successAt);assert.equal(manual.history.queryTimes.length,2);
   cacheNow=cacheApis[0].queryDeadline(manual.history);
   await Promise.all(cacheApis.map(api=>api.refresh(cacheStore)));
   assert.equal(cacheQueries,beforeManual+2); // 到期四组件只再查一次
   const goodHistory=cacheStore.read('history');cacheFailure=true;
-  await assert.rejects(cacheApis[0].refresh(cacheStore,true),/暂时不可用/);
+  await assert.rejects(cacheApis[0].refresh(cacheStore,true,'connection'),/暂时不可用/);
+  assert.equal(cacheStore.read('refresh-log').at(-1).state,'failed');assert.equal(cacheStore.read('refresh-log').at(-1).source,'connection');
   assert.equal(cacheStore.read('history').data.at,goodHistory.data.at);assert.deepEqual(cacheStore.read('history').queryTimes,goodHistory.queryTimes);assert.equal(sharedFiles.has('query-lock'),false);
   cacheFailure=false;cacheCookie='JSESSIONID=CACHE_ACCOUNT_B;';
   const changedAccount=await cacheApis[0].refresh(cacheStore);
+  assert.equal(cacheStore.read('refresh-log').length,1);
   assert.notEqual(changedAccount.history.session,goodHistory.session);assert.equal(changedAccount.fromCache,false);assert.equal(changedAccount.history.queryTimes.length,1);
   cacheStore.write('query-lock',{owner:'expired',expiresAt:cacheNow-1});
   await cacheApis[0].refresh(cacheStore,true);assert.equal(sharedFiles.has('query-lock'),false);
@@ -894,6 +915,14 @@ function distributionFixture() {
   const directApi=await load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest,FileManager:class extends FileManager {static local(){return new this();}fileExists(path){return path.endsWith('/history.json')||super.fileExists(path);}readString(path){return path.endsWith('/history.json')?JSON.stringify(nearMidnight.history):super.readString(path);}},importModule:()=>({DmYY:MockDmYY,Runing:async()=>{unwantedDmYY++;}})});
   await directApi.main();assert.equal(unwantedDmYY,0);assert.equal(cacheQueries,requestsBeforeMain);
   assert.equal(widget.refreshAfterDate.getTime(),new Date(2026,10,6).getTime());
+  cacheNow=new Date(2026,10,6,0,1).getTime();
+  await cacheApis[0].refresh(cacheStore,false,'widget-medium-today');assert.equal(cacheStore.read('refresh-log').at(-1).reason,'midnight');
+  const boundedFiles=new Map(sharedFiles);
+  const boundedStore={read:(key,fallback)=>boundedFiles.has(key)?JSON.parse(boundedFiles.get(key)):fallback,write:(key,value)=>boundedFiles.set(key,JSON.stringify(value)),remove:key=>boundedFiles.delete(key),clear:()=>{boundedFiles.delete('history');boundedFiles.delete('refresh-log');}};
+  boundedStore.write('refresh-log',[{at:cacheNow-8*86400000,source:'expired',state:'cache'},...Array.from({length:2005},()=>({at:cacheNow-1,source:'preview',state:'cache'}))]);
+  const boundedQueries=cacheQueries;await cacheApis[0].refresh(boundedStore,false,'preview');
+  assert.equal(cacheQueries,boundedQueries);assert.equal(boundedStore.read('refresh-log').length,2000);assert.ok(!boundedStore.read('refresh-log').some(item=>item.source==='expired'));
+
   completed=0;
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
@@ -1085,6 +1114,7 @@ function distributionFixture() {
   alertChoices.push(-1);await instance.clearHistoryPart('all');assert.equal(files.get(historyFile),JSON.stringify(cleanupHistory));
   await instance.clearHistoryPart('refresh');
   const clearedLog=JSON.parse(files.get(historyFile));
+  assert.equal(files.has('/documents/UnicomFlow/refresh-log.json'),false);
   assert.equal(api.refreshRecords(clearedLog).count,0);assert.deepEqual(clearedLog.events,JSON.parse(JSON.stringify(cleanupHistory.events)));
   assert.deepEqual(clearedLog.months,JSON.parse(JSON.stringify(cleanupHistory.months)));assert.deepEqual(clearedLog.data,JSON.parse(JSON.stringify(cleanupHistory.data)));
   const afterClearAt=Date.now()+1000;

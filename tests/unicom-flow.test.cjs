@@ -740,6 +740,27 @@ function distributionFixture() {
   assert.equal(twentyPast.fromCache,true);assert.equal(cacheQueries,1);assert.equal(twentyPast.history.data.at,successAt);
   const cachedWidget=cacheApis[1].makeWidget(twentyPast,true);
   assert.equal(cachedWidget.refreshAfterDate.getTime(),deadline); // 10:20读取仍建议10:30，不能变10:50
+  // 独立设置组件和请求间隔：缓存读取不改查询时间，按较早期限建议运行。
+  const intervalApi=await load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest});
+  const IntervalWidget=intervalApi.createWidgetClass(MockDmYY);
+  const intervalInstance=new IntervalWidget('');
+  assert.equal(intervalInstance.settings.refreshAfterDate,'30');
+  assert.equal(intervalInstance.settings.dataRequestMinutes,'30');
+  intervalInstance.settings.refreshAfterDate='10';intervalInstance.settings.dataRequestMinutes='40';intervalInstance.applySettings();
+  assert.equal(intervalApi.queryDeadline(twentyPast.history),successAt+40*60000);
+  assert.equal(intervalApi.makeWidget(twentyPast,true).refreshAfterDate.getTime(),cacheNow+10*60000);
+  intervalInstance.settings.refreshAfterDate='30';intervalInstance.settings.dataRequestMinutes='25';intervalInstance.applySettings();
+  assert.equal(intervalApi.makeWidget(twentyPast,true).refreshAfterDate.getTime(),successAt+25*60000);
+  const stillCached=await intervalApi.refresh(cacheStore);assert.equal(stillCached.fromCache,true);
+  assert.equal(stillCached.history.data.at,successAt);assert.equal(cacheQueries,1);
+  intervalInstance.settings.refreshAfterDate='oops';intervalInstance.settings.dataRequestMinutes='0';intervalInstance.applySettings();
+  assert.equal(intervalInstance.settings.refreshAfterDate,'30');assert.equal(intervalInstance.settings.dataRequestMinutes,'30');
+  assert.equal(intervalApi.queryDeadline(twentyPast.history),deadline);
+  assert.equal(intervalApi.makeWidget({...twentyPast,stale:true},true).refreshAfterDate.getTime(),cacheNow+5*60000);
+  class LegacyIntervalDmYY extends MockDmYY {constructor(){super();this.settings.refreshAfterDate='45';}}
+  const migratedInterval=new (intervalApi.createWidgetClass(LegacyIntervalDmYY))('');migratedInterval.applySettings();
+  assert.equal(migratedInterval.settings.dataRequestMinutes,'45');
+  assert.equal(intervalApi.queryDeadline(twentyPast.history),successAt+45*60000);
   const beforeManual=cacheQueries;
   const manual=await cacheApis[2].refresh(cacheStore,true);
   assert.equal(cacheQueries,beforeManual+1);assert.equal(manual.fromCache,false);assert.ok(manual.history.data.at>successAt);
@@ -842,6 +863,16 @@ function distributionFixture() {
   apiError=false;await instance.loadResult();assert.equal(instance.result.history.events.length,0);assert.equal(JSON.parse(files.get(historyFile)).cardHistoryVersion,1);
   const basic=await instance.basicSettings();
   assert.ok(basic.options[0].menu.some(item=>item.val==='flowBoxjsDomain'));
+  const widgetInterval=basic.options[0].menu.find(item=>item.val==='refreshAfterDate');
+  const requestInterval=basic.options[0].menu.find(item=>item.val==='dataRequestMinutes');
+  assert.equal(widgetInterval.title,'组件刷新间隔');assert.equal(requestInterval.title,'数据请求间隔');
+  fontSizeInput='10';await widgetInterval.onClick();
+  fontSizeInput='20';await requestInterval.onClick();instance.applySettings();
+  assert.equal(instance.settings.refreshAfterDate,'10');assert.equal(instance.settings.dataRequestMinutes,'20');
+  fontSizeInput='2';await requestInterval.onClick();assert.equal(instance.settings.dataRequestMinutes,'20');
+  assert.equal(alerts.at(-1).title,'未保存');
+  fontSizeInput='30';await widgetInterval.onClick();await requestInterval.onClick();instance.applySettings();
+  fontSizeInput='24';
   const colors=await instance.colorSettings();
   assert.equal(colors.options[0].menu.length,4);
   assert.equal(colors.options[0].menu[0].val,'blackCardColor');

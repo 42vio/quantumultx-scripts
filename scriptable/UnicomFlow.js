@@ -29,7 +29,7 @@ const UF = {
   endpoint: 'https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
   // 与成功 HAR 的实际表单一致；失败时仍可退回无表单请求。
   form: 'language=chinese',
-  refreshMinutes: 30,
+  refreshMinutes: 30, dataRequestMinutes: 30,
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
   usageFontSize: 25, totalFontSize: 11, titleFontSize: null,
@@ -826,7 +826,7 @@ function queryDeadline(history) {
   const at = history && history.data && history.data.at;
   if (!Number.isFinite(at)) return null;
   const midnight = new Date(at); midnight.setHours(24,0,0,0);
-  return Math.min(at + UF.refreshMinutes * 60000, midnight.getTime());
+  return Math.min(at + UF.dataRequestMinutes * 60000, midnight.getTime());
 }
 
 function reusableHistory(history, session, now) {
@@ -1075,7 +1075,10 @@ function makeWidget(result, medium, mode = 'month') {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.refreshAfterDate = new Date(result.stale ? Date.now() + 5 * 60000 : Math.max(Date.now() + 1000, queryDeadline(result.history) || Date.now() + UF.refreshMinutes * 60000));
+  const now = Date.now();
+  const nextRender = now + UF.refreshMinutes * 60000;
+  widget.refreshAfterDate = new Date(result.stale ? now + 5 * 60000
+    : Math.max(now + 1000, Math.min(nextRender, queryDeadline(result.history) || nextRender)));
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
@@ -1172,6 +1175,8 @@ function createWidgetClass(DmYY) {
       this.failure = '';
       applyTheme(this.settings);
       if (!this.settings.refreshAfterDate) this.settings.refreshAfterDate = String(UF_DEFAULTS.refreshMinutes);
+      // 原间隔同时控制请求和组件，升级时保留用户已设置的查询频率。
+      if (this.settings.dataRequestMinutes == null) this.settings.dataRequestMinutes = this.settings.refreshAfterDate;
       if (config.runsInApp) this.registerMenus();
     }
 
@@ -1182,6 +1187,10 @@ function createWidgetClass(DmYY) {
       const minutes = Number(this.settings.refreshAfterDate);
       UF.refreshMinutes = Number.isFinite(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : UF_DEFAULTS.refreshMinutes;
       this.settings.refreshAfterDate = String(UF.refreshMinutes);
+      const requestMinutes = Number(this.settings.dataRequestMinutes);
+      UF.dataRequestMinutes = Number.isFinite(requestMinutes) && requestMinutes >= 5 && requestMinutes <= 1440
+        ? requestMinutes : UF_DEFAULTS.dataRequestMinutes;
+      this.settings.dataRequestMinutes = String(UF.dataRequestMinutes);
       applyTheme(this.settings);
       UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
       for (const kind of ['usage', 'total']) {
@@ -1302,16 +1311,19 @@ function createWidgetClass(DmYY) {
       return this.renderAppView([{ title: '基础设置', menu: [
         { name: 'flowBoxjsDomain', val: 'flowBoxjsDomain', title: 'BoxJS 域名', desc: '只填域名，不含 http://',
           type: 'input', defaultValue: this.baseSettings.boxjsDomain || 'boxjs.net', placeholder: 'boxjs.net', icon: { name: 'network', color: '#007AFF' } },
-        { name: 'refreshAfterDate', val: 'refreshAfterDate', title: '刷新间隔', desc: '5—1440 分钟；实际刷新由 iOS 调度',
-          type: 'input', placeholder: '30', icon: { name: 'clock', color: '#34C759' },
+        ...[
+          ['refreshAfterDate', '组件刷新间隔', '默认30分钟；建议组件重新运行的间隔，实际由 iOS 调度。缓存更早到期时提前请求运行。', 'clock'],
+          ['dataRequestMinutes', '数据请求间隔', '默认30分钟；所有组件共用，成功查询后在此间隔内使用缓存；立即刷新数据不受限制。', 'arrow.triangle.2.circlepath'],
+        ].map(([key, title, desc, icon]) => ({ name: key, val: key, title, desc,
+          type: 'input', placeholder: '30', icon: { name: icon, color: '#34C759' },
           onClick: async () => {
-            const a = new Alert(); a.title = '刷新间隔'; a.message = '单位为分钟，范围 5—1440；实际刷新由 iOS 调度。';
-            a.addTextField('30', String(this.settings.refreshAfterDate || '30')); a.addAction('保存'); a.addCancelAction('取消');
+            const a = new Alert(); a.title = title; a.message = desc + '\n单位为分钟，范围 5—1440。';
+            a.addTextField('30', String(this.settings[key] || '30')); a.addAction('保存'); a.addCancelAction('取消');
             if (await a.presentAlert() < 0) return;
             const n = Number(a.textFieldValue(0));
             if (!Number.isFinite(n) || n < 5 || n > 1440) return alertMessage('未保存', '请输入 5—1440 之间的分钟数');
-            this.settings.refreshAfterDate = String(n); this.saveSettings(false);
-          } },
+            this.settings[key] = String(n); this.saveSettings(false);
+          } })),
       ] }]);
     }
 

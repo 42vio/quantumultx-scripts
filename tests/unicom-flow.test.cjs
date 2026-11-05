@@ -602,6 +602,15 @@ function distributionFixture() {
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[2].textContent==='查询失败'));
   assert.ok(!elements.get('refresh-rows').children.some(row=>row.children[2].textContent.includes('未请求联通')));
   elements.get('hide-no-request').checked=false;elements.get('hide-no-request').onchange();assert.equal(elements.get('refresh-rows').children.length,5);
+  const selectionBeforeReload=elements.get('period-select').value;
+  elements.get('hide-no-request').checked=true;
+  const updatedRecords=api.refreshRecords({...queryHistory,queryTimes:[...queryHistory.queryTimes,logAt]},logAt,[{at:logAt,source:'widget-medium-month',state:'cache',requested:false}]);
+  listeners.get('refresh-records-data')({detail:{at:logAt,report:updatedRecords}});
+  assert.equal(elements.get('refresh-count').textContent,'3 次');assert.equal(elements.get('refresh-rows').children.length,3);
+  assert.equal(elements.get('hide-no-request').checked,true);assert.equal(elements.get('period-select').value,selectionBeforeReload);
+  assert.equal(elements.get('reload-refresh-records').disabled,false);assert.ok(elements.get('refresh-list-updated').textContent.startsWith('列表更新于'));
+  elements.get('hide-no-request').checked=false;elements.get('hide-no-request').onchange();assert.equal(elements.get('refresh-rows').children.length,4);
+
 
 
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:{rows:[],count:0,average:null,longest:null}}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
@@ -973,6 +982,7 @@ function distributionFixture() {
   const appApi = await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
   const AppWidget=appApi.createWidgetClass(MockDmYY);
   // 手动点击及旧刷新链接只打开配置，不请求Cookie/联通，也不写执行日志。
+  const completedBeforeApp=completed;
   for(const family of ['small','medium']) {
     const tapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:family}}});
     const prior=requestCount, priorFiles=new Map(files);
@@ -983,6 +993,7 @@ function distributionFixture() {
   const beforeTodayTap=requestCount;await todayTapApi.main();assert.equal(requestCount,beforeTodayTap);
   const plainAppApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
   await plainAppApi.main();assert.equal(requestCount,beforeTodayTap);assert.ok(feedback.at(-1).html.includes('配置内容'));
+  assert.equal(completed,completedBeforeApp); // 交互菜单不提前调用Script.complete，组件分支仍正常完成
   files.clear();apiError=false;
   const before=requestCount;
   const instance=new AppWidget('');
@@ -1042,6 +1053,13 @@ function distributionFixture() {
   assert.equal(requestCount,beforeRecordsRequest);assert.deepEqual(files,beforeRecordsFiles);
   const recordsView=feedback.at(-1).view, beforeClearFile=files.get('/documents/UnicomFlow/history.json'), beforeClearRequests=requestCount;
   const beforeDiagnosticFiles=new Map(files);
+  const beforeReloadViews=feedback.length;
+  assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://reload-refresh-records'}),false);
+  assert.equal(requestCount,beforeClearRequests);assert.deepEqual(files,beforeDiagnosticFiles);assert.equal(feedback.length,beforeReloadViews);
+  let listUpdateEvent;
+  new vm.Script(feedback.at(-1).updates.at(-1)).runInNewContext({document:{dispatchEvent:event=>{listUpdateEvent=event;}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}}});
+  assert.equal(listUpdateEvent.type,'refresh-records-data');assert.ok(Array.isArray(listUpdateEvent.detail.report.entries));
+
   assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://copy-refresh-diagnostics'}),false);
   assert.ok(copiedDiagnostic.includes('联通流量执行诊断'));assert.ok(copiedDiagnostic.includes('runId'));
   assert.ok(copiedDiagnostic.includes('查看操作时间线（仅当前运行内存，不写文件）'));

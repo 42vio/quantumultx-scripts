@@ -750,8 +750,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   </style></head><body><main class="shell">
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
-    <section class="card"><div class="card-head"><h2>最近24小时</h2></div><div class="refresh-summary"><div class="mini"><div class="mini-label">查询成功</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><details class="refresh-scope"><summary>统计说明</summary><p>间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔可连接到24小时外的上一条成功记录。使用缓存与执行失败不计入成功次数和查询间隔。</p></details></section>
-    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><div class="refresh-tools"><label class="refresh-filter"><input id="hide-no-request" type="checkbox">隐藏未请求联通的记录</label><button id="copy-refresh-diagnostics" class="records-link" type="button">复制诊断</button></div><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
+    <section class="card"><div class="card-head"><h2>最近24小时</h2><span id="refresh-list-updated" class="hint"></span></div><div class="refresh-summary"><div class="mini"><div class="mini-label">查询成功</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><details class="refresh-scope"><summary>统计说明</summary><p>间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔可连接到24小时外的上一条成功记录。使用缓存与执行失败不计入成功次数和查询间隔。</p></details></section>
+    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><div class="refresh-tools"><label class="refresh-filter"><input id="hide-no-request" type="checkbox">隐藏未请求联通的记录</label><button id="reload-refresh-records" class="records-link" type="button">刷新列表</button><button id="copy-refresh-diagnostics" class="records-link" type="button">复制诊断</button></div><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
     <p class="refresh-note" id="refresh-execution-summary"></p><p class="refresh-note">来源及执行结果从新版开始记录，旧成功记录标为来源未知。命中缓存表示脚本执行但未请求联通，不代表iOS是否重绘。日志最多保留7天、2000条，不保存Cookie或接口原文；切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
@@ -829,16 +829,17 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
       el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
       select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
     }
-    const queryLog=reports.refresh||{rows:[],count:0,average:null,longest:null};
+    let queryLog=reports.refresh||{rows:[],count:0,average:null,longest:null};
     const duration=ms=>ms==null?'—':ms<60000?Math.max(1,Math.round(ms/1000))+' 秒':(Math.round(ms/6000)/10)+' 分钟';
-    el('refresh-count').textContent=queryLog.count+' 次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
-    const executionRows=queryLog.entries||queryLog.rows;
-    el('refresh-execution-summary').textContent='实际查询成功 '+queryLog.count+' 次 · 使用缓存 '+(queryLog.cached||0)+' 次 · 执行失败 '+(queryLog.failed||0)+' 次。上方平均与最长间隔仅计算成功查询。';
+    let executionRows=queryLog.entries||queryLog.rows;
     el('clear-refresh-records').onclick=()=>{location.href='unicomflow://clear-refresh-records';};
     el('copy-refresh-diagnostics').onclick=()=>{location.href='unicomflow://copy-refresh-diagnostics';};
     const sourceName=source=>source&&source.startsWith('widget-')?'小组件 · '+(source.includes('-small-')?'小号':'中号')+' · '+(source.endsWith('-today')?'今日':'当月')
       :({script:'运行脚本',preview:'组件预览',statistics:'用量统计',manual:'手动刷新',connection:'连接检查',diagnostics:'成员检查'})[source]||'来源未知';
     const renderExecutions=()=>{
+    el('refresh-count').textContent=queryLog.count+' 次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
+    el('refresh-execution-summary').textContent='实际查询成功 '+queryLog.count+' 次 · 使用缓存 '+(queryLog.cached||0)+' 次 · 执行失败 '+(queryLog.failed||0)+' 次。上方平均与最长间隔仅计算成功查询。';
+
     const hideNoRequest=el('hide-no-request').checked;
     const visibleRows=executionRows.filter(item=>!hideNoRequest||!(item.requested===false||item.state==='cache'));
     el('refresh-rows').replaceChildren();el('refresh-empty').hidden=visibleRows.length>0;
@@ -862,6 +863,13 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     }
     };
     el('hide-no-request').onchange=renderExecutions;renderExecutions();
+    el('reload-refresh-records').onclick=()=>{el('reload-refresh-records').disabled=true;el('reload-refresh-records').textContent='读取中…';location.href='unicomflow://reload-refresh-records';};
+    document.addEventListener('refresh-records-data',event=>{
+      queryLog=event.detail.report;executionRows=queryLog.entries||queryLog.rows;renderExecutions();
+      el('reload-refresh-records').disabled=false;el('reload-refresh-records').textContent='刷新列表';
+      el('refresh-list-updated').textContent='列表更新于 '+clock(event.detail.at,false);
+    });
+
     let showingRefresh=false, usageScroll=0;
     el('refresh-records-toggle').onclick=()=>{
       if(!showingRefresh)usageScroll=typeof scrollY==='number'?scrollY:0;
@@ -1525,6 +1533,19 @@ function createWidgetClass(DmYY) {
       let clearing = false;
       const stale = this.result.stale;
       view.shouldAllowRequest = request => {
+        if (request.url === 'unicomflow://reload-refresh-records') {
+          traceViewing('刷新本地记录列表');
+          try {
+            const at = Date.now(), report = refreshRecords(this.store.read('history', {}) || {}, at, this.store.read('refresh-log', []));
+            view.evaluateJavaScript(`document.dispatchEvent(new CustomEvent('refresh-records-data',{detail:${JSON.stringify({ at, report })}}))`)
+              .catch(() => alertMessage('列表刷新未完成', '请重新打开刷新记录页面'));
+          } catch (_) {
+            view.evaluateJavaScript("document.getElementById('reload-refresh-records').disabled=false;document.getElementById('reload-refresh-records').textContent='刷新列表';").catch(() => {});
+            alertMessage('列表刷新未完成', '本地日志读取失败，请重试');
+          }
+          return false;
+        }
+
         if (request.url === 'unicomflow://copy-refresh-diagnostics') {
           try {
             traceViewing('复制诊断');
@@ -1800,8 +1821,9 @@ async function main() {
     traceViewing('打开配置菜单');
     const instance = new Widget(args.widgetParameter || '');
     await instance.renderAppView(instance._menuActions);
-    traceViewing('配置菜单已提交，App主入口完成');
-    Script.complete(); return;
+    // DmYY 页面仍有后续交互，不在菜单刚提交时主动通知宿主脚本完成。
+    traceViewing('配置菜单已提交（未主动结束脚本）');
+    return;
   }
   await dependency.Runing(Widget, args.widgetParameter || '', false);
 }

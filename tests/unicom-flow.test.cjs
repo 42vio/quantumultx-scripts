@@ -576,15 +576,15 @@ function distributionFixture() {
   const logHTML=api.statisticsHTML({...browseReports,refresh:queryReport});
   fs.writeFileSync(monthlyOutput+'/refresh-records.html',logHTML);
   elements.clear();new vm.Script(logHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('refresh-count').textContent,'2次');assert.equal(elements.get('refresh-average').textContent,'720分钟');
-  assert.equal(elements.get('refresh-longest').textContent,'1320分钟');assert.equal(elements.get('refresh-rows').children.length,2);
+  assert.equal(elements.get('refresh-count').textContent,'2 次');assert.equal(elements.get('refresh-average').textContent,'720 分钟');
+  assert.equal(elements.get('refresh-longest').textContent,'1320 分钟');assert.equal(elements.get('refresh-rows').children.length,2);
   assert.equal(elements.get('refresh-empty').hidden,true);
   const executionReport=api.refreshRecords(queryHistory,logAt,[
     {at:logAt-3600000,source:'manual',state:'query',reason:'forced'},
     {at:logAt-1800000,source:'widget-small-today',state:'cache'},
     {at:logAt-1000000,source:'connection',state:'failed'}]);
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:executionReport}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('refresh-count').textContent,'2次');assert.equal(elements.get('refresh-rows').children.length,4);
+  assert.equal(elements.get('refresh-count').textContent,'2 次');assert.equal(elements.get('refresh-rows').children.length,4);
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='小组件 · 小号 · 今日'&&row.children[2].textContent==='使用缓存 · 未请求联通'&&row.children[3].textContent==='—'));
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='手动刷新'&&row.children[2].textContent==='查询成功 · 强制'));
 

@@ -582,11 +582,18 @@ function distributionFixture() {
   const executionReport=api.refreshRecords(queryHistory,logAt,[
     {at:logAt-3600000,source:'manual',state:'query',reason:'forced'},
     {at:logAt-1800000,source:'widget-small-today',state:'cache'},
-    {at:logAt-1000000,source:'connection',state:'failed'}]);
+    {at:logAt-1000000,source:'connection',state:'failed',requested:true},
+    {at:logAt-500000,source:'script',state:'failed',requested:false}]);
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:executionReport}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('refresh-count').textContent,'2 次');assert.equal(elements.get('refresh-rows').children.length,4);
+  assert.equal(elements.get('refresh-count').textContent,'2 次');assert.equal(elements.get('refresh-rows').children.length,5);
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='小组件 · 小号 · 今日'&&row.children[2].textContent==='使用缓存 · 未请求联通'&&row.children[3].textContent==='—'));
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='手动刷新'&&row.children[2].textContent==='查询成功 · 强制'));
+  elements.get('hide-no-request').checked=true;elements.get('hide-no-request').onchange();
+  assert.equal(elements.get('refresh-rows').children.length,3);assert.equal(elements.get('refresh-count').textContent,'2 次');
+  assert.ok(elements.get('refresh-rows').children.some(row=>row.children[2].textContent==='查询失败'));
+  assert.ok(!elements.get('refresh-rows').children.some(row=>row.children[2].textContent.includes('未请求联通')));
+  elements.get('hide-no-request').checked=false;elements.get('hide-no-request').onchange();assert.equal(elements.get('refresh-rows').children.length,5);
+
 
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:{rows:[],count:0,average:null,longest:null}}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('refresh-empty').hidden,false);assert.equal(elements.get('refresh-average').textContent,'—');
@@ -681,7 +688,7 @@ function distributionFixture() {
   const noonVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:NoonDate,Color,Rect,Size,Path,DrawContext,Font});
   // 月模式直接读既有每日用量记录，小时明细清理后仍可显示；不把跨日总量塞进每日柱。
   const monthWidget=noonVisual.renderImage({history:{...cardCross,events:[]},stale:false},true,338,158,'month');
-  assert.ok(monthWidget.includes('>每日用量</text>'));assert.ok(!monthWidget.includes('>小时用量</text>'));
+  assert.ok(monthWidget.includes('>每日用量 · MAX '));assert.ok(!monthWidget.includes('>小时用量</text>'));
   assert.ok(monthWidget.includes('>主卡</text>'));assert.ok(monthWidget.includes('>副卡</text>'));assert.ok(!monthWidget.includes('↻'));
   const day3x=13+(2+0.5)*(312/30), dayWidth=312/30-4.5;
   assert.ok(monthWidget.includes(`x="${day3x-dayWidth/2}" y="${128-29*60/90}" width="${dayWidth}" height="${29*60/90}" fill="#0A94FF"`));
@@ -710,12 +717,12 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158,'today');
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
-  assert.ok(dayImage.includes('>MAX —</text>'));assert.ok(zeroImage.includes('>MAX 0 MB</text>'));
-  assert.ok(dayImage.includes('>小时用量</text>'));assert.ok(dayImage.includes('>主卡</text>'));assert.ok(dayImage.includes('>副卡</text>'));
+  assert.ok(dayImage.includes('>小时用量 · MAX —</text>'));assert.ok(zeroImage.includes('>小时用量 · MAX 0 MB</text>'));
+  assert.ok(dayImage.includes('>小时用量 · MAX '));assert.ok(dayImage.includes('>主卡</text>'));assert.ok(dayImage.includes('>副卡</text>'));
   assert.ok(zeroImage.includes('>主卡</text>'));assert.ok(zeroImage.includes('>副卡</text>'));
   assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
   const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158,'today');
-  assert.ok(unknownImage.includes('text-anchor="end"'));assert.ok(unknownImage.includes('>MAX 10 MB</text>'));
+  assert.ok(unknownImage.includes('text-anchor="start"'));assert.ok(unknownImage.includes('>小时用量 · MAX 10 MB</text>'));
   assert.ok(unknownImage.includes('>主卡</text>'));assert.ok(unknownImage.includes('>副卡</text>'));
 
 
@@ -859,6 +866,7 @@ function distributionFixture() {
   assert.equal(sharedFiles.has('query-lock'),false);
   const initialExecutions=cacheStore.read('refresh-log');assert.equal(initialExecutions.length,4);
   assert.equal(initialExecutions.filter(item=>item.state==='query').length,1);assert.equal(initialExecutions.filter(item=>item.state==='cache').length,3);
+  assert.equal(initialExecutions.filter(item=>item.requested===true).length,1);assert.equal(initialExecutions.filter(item=>item.requested===false).length,3);
   assert.ok(initialExecutions.every(item=>item.source.startsWith('widget-')));
   const initialExecutionReport=cacheApis[0].refreshRecords(cacheStore.read('history'),cacheNow,initialExecutions);
   assert.equal(initialExecutionReport.count,1);assert.equal(initialExecutionReport.cached,3);assert.equal(initialExecutionReport.entries.length,4);
@@ -900,7 +908,7 @@ function distributionFixture() {
   assert.equal(cacheQueries,beforeManual+2); // 到期四组件只再查一次
   const goodHistory=cacheStore.read('history');cacheFailure=true;
   await assert.rejects(cacheApis[0].refresh(cacheStore,true,'connection'),/暂时不可用/);
-  assert.equal(cacheStore.read('refresh-log').at(-1).state,'failed');assert.equal(cacheStore.read('refresh-log').at(-1).source,'connection');
+  assert.equal(cacheStore.read('refresh-log').at(-1).state,'failed');assert.equal(cacheStore.read('refresh-log').at(-1).source,'connection');assert.equal(cacheStore.read('refresh-log').at(-1).requested,true);
   assert.equal(cacheStore.read('history').data.at,goodHistory.data.at);assert.deepEqual(cacheStore.read('history').queryTimes,goodHistory.queryTimes);assert.equal(sharedFiles.has('query-lock'),false);
   cacheFailure=false;cacheCookie='JSESSIONID=CACHE_ACCOUNT_B;';
   const changedAccount=await cacheApis[0].refresh(cacheStore);
@@ -946,30 +954,18 @@ function distributionFixture() {
   // App 打开配置页不查账号；DnYY 分组菜单的代理缓存仍直读指定 Cookie。
   const appApi = await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
   const AppWidget=appApi.createWidgetClass(MockDmYY);
-  // 点击两种尺寸的卡片均直接查询并展示对应预览，不经过配置入口。
+  // 手动点击及旧刷新链接只打开配置，不请求Cookie/联通，也不写执行日志。
   for(const family of ['small','medium']) {
     const tapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:family}}});
-    const prior=requestCount;
-    await tapApi.main();
-    assert.equal(requestCount,prior+2);
-    const message=feedback.at(-1);
-    assert.equal(message.requestsAtOpen,prior);assert.equal(message.presented,true);
-    assert.ok(message.html.includes('正在刷新'));assert.ok(message.updates.join('').includes('刷新成功'));
-    assert.equal(widget.url,undefined); // 不覆盖系统配置的 Open App / Run Script / Open Script / Open URL
-    assert.ok(widget.backgroundImage.includes('已刷新'));assert.ok(!widget.backgroundImage.includes('点击刷新'));
-    assert.equal(widget.children.length,0);assert.ok(!widget.backgroundImage.includes('↻'));
-
-
+    const prior=requestCount, priorFiles=new Map(files);
+    await tapApi.main();assert.equal(requestCount,prior);assert.deepEqual(files,priorFiles);
+    assert.ok(feedback.at(-1).html.includes('配置内容'));
   }
   const todayTapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'medium',ufMode:'today'}}});
-  await todayTapApi.main();
-  assert.ok(widget.backgroundImage.includes('今日'));
-  assert.equal(widget.children.length,0);assert.equal(widget.url,undefined);
-  apiError=true;
-  const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
-  await staleApi.main(); assert.ok(feedback.at(-1).updates.join('').includes('刷新失败'));assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
-  files.clear(); await staleApi.main(); assert.ok(widget.texts.length);assert.equal(widget.url,undefined);
-  apiError=false;
+  const beforeTodayTap=requestCount;await todayTapApi.main();assert.equal(requestCount,beforeTodayTap);
+  const plainAppApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false}});
+  await plainAppApi.main();assert.equal(requestCount,beforeTodayTap);assert.ok(feedback.at(-1).html.includes('配置内容'));
+  files.clear();apiError=false;
   const before=requestCount;
   const instance=new AppWidget('');
   assert.equal(requestCount,before);
@@ -1020,10 +1016,12 @@ function distributionFixture() {
   const successfulBeforeFailure=files.get('/documents/UnicomFlow/history.json');
   apiError=true;await immediate.onClick();assert.equal(alerts.at(-1).title,'刷新未完成');
   assert.equal(files.get('/documents/UnicomFlow/history.json'),successfulBeforeFailure);apiError=false;
-  const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics+1);
+  const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics);
   assert.ok(feedback.at(-1).html.includes('tab-hours'));assert.ok(feedback.at(-1).html.includes('tab-year'));
   const recordMenu=menus.find(item=>item.name==='flowRefreshRecords');assert.equal(recordMenu.title,'刷新记录');
+  const beforeRecordsRequest=requestCount, beforeRecordsFiles=new Map(files);
   await recordMenu.onClick();
+  assert.equal(requestCount,beforeRecordsRequest);assert.deepEqual(files,beforeRecordsFiles);
   const recordsView=feedback.at(-1).view, beforeClearFile=files.get('/documents/UnicomFlow/history.json'), beforeClearRequests=requestCount;
   assert.equal(recordsView.shouldAllowRequest({url:'https://example.com'}),true);
   alertChoices.push(-1);assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://clear-refresh-records'}),false);
@@ -1038,7 +1036,15 @@ function distributionFixture() {
   assert.equal(elements.get('page-title').textContent,'刷新记录');assert.equal(elements.get('usage-content').hidden,true);
   elements.get('refresh-records-toggle').onclick();assert.equal(elements.get('page-title').textContent,'用量统计');
 
-  apiError=true;await instance.showUsageStatistics();assert.ok(feedback.at(-1).html.includes('缓存数据'));apiError=false;
+  apiError=true;const beforeOfflineStatistics=requestCount, beforeOfflineFiles=new Map(files);await instance.showUsageStatistics();assert.equal(requestCount,beforeOfflineStatistics);assert.deepEqual(files,beforeOfflineFiles);apiError=false;
+
+  const savedReadOnlyFiles=new Map(files), requestsBeforeEmpty=requestCount;
+  files.clear();
+  await instance.showUsageStatistics();assert.equal(alerts.at(-1).title,'用量统计');assert.ok(alerts.at(-1).message.includes('立即刷新数据'));
+  files.set('/documents/UnicomFlow/refresh-log.json',JSON.stringify([{at:Date.now()-1000,source:'widget-small-today',state:'failed'}]));
+  await instance.showUsageStatistics(true);assert.ok(feedback.at(-1).html.includes('widget-small-today'));
+  assert.equal(requestCount,requestsBeforeEmpty);assert.equal(files.size,1);
+  files.clear();for(const [path,value] of savedReadOnlyFiles)files.set(path,value);
 
   const configPage=await instance.renderAppView([{title:'预览组件',menu:[{name:'small'},{name:'medium'}]},...instance._menuActions]);
   assert.equal(configPage.options.flatMap(group=>group.menu).length,12);

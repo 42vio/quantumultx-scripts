@@ -726,12 +726,13 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
   .records-details>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 18px 18px;list-style:none;font-size:15px;font-weight:600}.records-details>summary::-webkit-details-marker{display:none}.records-details>summary .hint{margin-left:auto;font-weight:400}.records-details>summary::after{content:"›";font-size:22px;color:var(--muted);transform:rotate(90deg)}.records-details[open]>summary::after{transform:rotate(-90deg)}
   .hero .totals{margin-top:10px;gap:8px}.hero .mini{padding:8px 10px}.hero .mini strong{font-size:18px;margin-top:3px}.hero .coverage{line-height:1.4}.hero .range-note{margin-top:6px}.badge:not(.cached){display:none}
+  .refresh-filter{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 18px 10px;font-size:12px;color:var(--muted)}.refresh-filter input{width:17px;height:17px;margin:0;accent-color:var(--blue)}
   .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.refresh-summary .mini{padding:11px 8px;min-width:0}.refresh-summary strong{font-size:clamp(12px,3.6vw,17px);white-space:nowrap;line-height:1.3;margin-top:7px}.refresh-scope{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.refresh-scope summary{font-size:11px;color:var(--muted);min-height:28px}.refresh-table{min-width:480px}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
   </style></head><body><main class="shell">
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
     <section class="card"><div class="card-head"><h2>最近24小时</h2></div><div class="refresh-summary"><div class="mini"><div class="mini-label">查询成功</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><details class="refresh-scope"><summary>统计说明</summary><p>间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔可连接到24小时外的上一条成功记录。使用缓存与执行失败不计入成功次数和查询间隔。</p></details></section>
-    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
+    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><label class="refresh-filter"><input id="hide-no-request" type="checkbox">隐藏未请求联通的记录</label><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
     <p class="refresh-note" id="refresh-execution-summary"></p><p class="refresh-note">来源及执行结果从新版开始记录，旧成功记录标为来源未知。命中缓存表示脚本执行但未请求联通，不代表iOS是否重绘。日志最多保留7天、2000条，不保存Cookie或接口原文；切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
@@ -813,18 +814,24 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     const duration=ms=>ms==null?'—':ms<60000?Math.max(1,Math.round(ms/1000))+' 秒':(Math.round(ms/6000)/10)+' 分钟';
     el('refresh-count').textContent=queryLog.count+' 次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
     const executionRows=queryLog.entries||queryLog.rows;
-    el('refresh-empty').hidden=executionRows.length>0;
     el('refresh-execution-summary').textContent='实际查询成功 '+queryLog.count+' 次 · 使用缓存 '+(queryLog.cached||0)+' 次 · 执行失败 '+(queryLog.failed||0)+' 次。上方平均与最长间隔仅计算成功查询。';
     el('clear-refresh-records').onclick=()=>{location.href='unicomflow://clear-refresh-records';};
     const sourceName=source=>source&&source.startsWith('widget-')?'小组件 · '+(source.includes('-small-')?'小号':'中号')+' · '+(source.endsWith('-today')?'今日':'当月')
       :({script:'运行脚本',preview:'组件预览',statistics:'用量统计',manual:'手动刷新',connection:'连接检查',diagnostics:'成员检查'})[source]||'来源未知';
-    for(const item of executionRows){
+    const renderExecutions=()=>{
+    const hideNoRequest=el('hide-no-request').checked;
+    const visibleRows=executionRows.filter(item=>!hideNoRequest||!(item.requested===false||item.state==='cache'));
+    el('refresh-rows').replaceChildren();el('refresh-empty').hidden=visibleRows.length>0;
+    el('refresh-empty').textContent=hideNoRequest?'当前筛选下暂无记录':'最近24小时暂无执行记录';
+    for(const item of visibleRows){
       const row=document.createElement('tr'),time=document.createElement('td'),source=document.createElement('td'),status=document.createElement('td'),gap=document.createElement('td');
       time.textContent=clock(item.at,true);source.textContent=sourceName(item.source);
-      status.textContent=item.state==='cache'?'使用缓存 · 未请求联通':item.state==='failed'?'执行失败':item.reason==='forced'?'查询成功 · 强制':item.reason==='midnight'?'查询成功 · 跨日':item.reason==='no-cache'?'查询成功 · 无缓存':'查询成功';
+      status.textContent=item.state==='cache'?'使用缓存 · 未请求联通':item.state==='failed'?(item.requested===false?'执行失败 · 未请求联通':item.requested===true?'查询失败':'执行失败 · 请求状态未知'):item.reason==='forced'?'查询成功 · 强制':item.reason==='midnight'?'查询成功 · 跨日':item.reason==='no-cache'?'查询成功 · 无缓存':'查询成功';
       gap.textContent=item.state==='cache'||item.state==='failed'?'—':duration(item.interval);
       row.append(time,source,status,gap);el('refresh-rows').append(row);
     }
+    };
+    el('hide-no-request').onchange=renderExecutions;renderExecutions();
     let showingRefresh=false, usageScroll=0;
     el('refresh-records-toggle').onclick=()=>{
       if(!showingRefresh)usageScroll=typeof scrollY==='number'?scrollY:0;
@@ -983,9 +990,10 @@ function pauseQuery(ms) {
 }
 
 async function refresh(store, force = false, source = 'script') {
+  let requested = false;
   const saveExecution = (state, result) => {
     const now = Date.now(), dataAt = result && result.history.data.at;
-    const entry = { at: state === 'query' ? dataAt : now, source, state, forced: force,
+    const entry = { at: state === 'query' ? dataAt : now, source, state, forced: force, requested,
       ...(result && result.reason ? { reason: result.reason } : {}),
       ...(Number.isFinite(dataAt) ? { dataAt } : {}) };
     // 独立轻量日志，缓存命中不重写整份流量历史；限制保留时间与条数。
@@ -993,13 +1001,13 @@ async function refresh(store, force = false, source = 'script') {
     log.push(entry); store.write('refresh-log', log.slice(-2000));
   };
   let result;
-  try { result = await queryWithCache(store, force); }
+  try { result = await queryWithCache(store, force, () => { requested = true; }); }
   catch (error) { try { saveExecution('failed'); } catch (_) {} throw error; }
   try { saveExecution(result.fromCache ? 'cache' : 'query', result); } catch (_) {}
   return result;
 }
 
-async function queryWithCache(store, force = false) {
+async function queryWithCache(store, force = false, onQuery = () => {}) {
   const started = Date.now();
   // 每次核对当前 Cookie，避免缓存命中后掩盖换号；仅联通查询共用缓存。
   const cookie = await readCookie(), session = sessionTag(cookie);
@@ -1023,6 +1031,7 @@ async function queryWithCache(store, force = false) {
     await pauseQuery(80);
     if ((store.read('query-lock', {}) || {}).owner !== owner) { waited = true; continue; }
     try {
+      onQuery();
       const data = await fetchData(cookie, store.read('categories', {}));
       const sample = { ...data, at: Date.now(), session };
       const history = updateHistory(store.read('history', null), sample);
@@ -1171,11 +1180,10 @@ function renderImage(result, medium, width, height, mode = 'month') {
     const cell = chartW / buckets.length, max = Math.max(1, peak);
     const markers = today ? [0, 6, 12, 18, 23] : [0, 4, 9, 14, 19, 24, buckets.length - 1];
     const minimumBar = 1.5;
-    text(ctx, today ? '小时用量' : '每日用量',
-      chartX, 84 - chartLift, chartW - 110, 12, 8, UF.muted);
     const peakLabel = visibleBuckets.some(bucket => bucket.samples)
       ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
-    text(ctx, `MAX ${peakLabel}`, chartX + chartW - 110, 84 - chartLift, 110, 12, 8, UF.muted, false, 'right');
+    text(ctx, `${today ? '小时用量' : '每日用量'} · MAX ${peakLabel}`,
+      chartX, 84 - chartLift, chartW, 12, 8, UF.muted);
     buckets.forEach((bucket, slot) => {
       const center = chartX + (slot + 0.5) * cell;
       const barWidth = Math.max(1, cell - 4.5);
@@ -1385,6 +1393,15 @@ function createWidgetClass(DmYY) {
       return this.result;
     }
 
+    loadStoredResult() {
+      this.applySettings();
+      const saved = this.store.read('history', null), history = migrateSmallCrossDays(saved);
+      if (history !== saved) this.store.write('history', history);
+      this.result = history && history.data ? { history, stale: false, error: '', fromCache: true } : null;
+      this.failure = this.result ? '' : '暂无本地用量，请先在菜单点击“立即刷新数据”。';
+      return this.result;
+    }
+
     async render() {
       if (!['small', 'medium'].includes(this.widgetFamily)) return errorWidget('请添加小号或中号组件');
       await this.loadResult();
@@ -1455,8 +1472,9 @@ function createWidgetClass(DmYY) {
     }
 
     async showUsageStatistics(showRefresh = false) {
-      await this.loadResult(false, 'statistics');
-      if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
+      this.loadStoredResult();
+      if (!this.result && showRefresh) this.result = { history: { ...(this.store.read('history', {}) || {}), data: { at: null } }, stale: false };
+      if (!this.result) return alertMessage('用量统计', this.failure);
       const view = new WebView();
       await view.loadHTML(statisticsHTML(statisticsReports(this.result.history, Date.now(), this.store.read('refresh-log', [])), this.result.stale, 'hours', showRefresh));
       let clearing = false;
@@ -1574,7 +1592,7 @@ function createWidgetClass(DmYY) {
         onClick: () => ['hours', 'months'].includes(part) ? this.showStoredDetails(part) : this.clearHistoryPart(part),
       })) }, { title: '谨慎清理', menu: choices.filter(([part]) => ['snapshot', 'all'].includes(part)).map(([part, title, desc]) => ({
         name: 'clearHistory_' + part, title: '清除' + title, desc, type: 'input',
-        icon: { name: part === 'snapshot' ? 'doc.badge.clock' : 'exclamationmark.triangle.fill', color: part === 'snapshot' ? '#FF9500' : '#FF3B30' },
+        icon: { name: part === 'snapshot' ? 'doc.badge.clock' : 'exclamationmark.triangle', color: part === 'snapshot' ? '#FF9500' : '#FF3B30' },
         onClick: () => this.clearHistoryPart(part),
       })) }]);
     }
@@ -1685,7 +1703,7 @@ function createWidgetClass(DmYY) {
         action('flowPreview', '组件预览', 'rectangle.on.rectangle', '#007AFF', () => this.showPreview()),
       ] });
       this.registerAction({ title: '组件配置', menu: [
-        action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
+        action('flowUpdate', '脚本更新', 'arrow.down.circle', '#007AFF', () => this.checkAndUpdateScript()),
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
         action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
         action('flowColors', '颜色配置', 'paintpalette.fill', '#AF52DE', () => this.colorSettings()),
@@ -1705,38 +1723,6 @@ function createWidgetClass(DmYY) {
   };
 }
 
-async function refreshWithFeedback(instance, medium) {
-  const view = new WebView();
-  // 先展示触发状态再请求，不把加载文字当作新的成功查询时间。
-  await view.loadHTML(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    body{margin:0;padding:32px 22px;background:#${UF.bg};color:#${UF.text};font:16px -apple-system,sans-serif;text-align:center}
-    #spin{margin:28px auto;width:22px;height:22px;border:3px solid #8885;border-top-color:#${UF.blue};border-radius:50%;animation:turn .7s linear infinite}
-    @keyframes turn{to{transform:rotate(360deg)}}h2{font-size:21px}p{line-height:1.6;color:#${UF.muted}}
-    img{display:none;margin:24px auto;width:100%;max-width:${medium ? 600 : 300}px;border-radius:22px}
-    </style></head><body><div id="spin"></div><h2 id="status">正在刷新…</h2><p id="detail">已收到点击，正在查询联通用量</p><img id="preview" alt="刷新后的组件"></body></html>`);
-  const closed = view.present().catch(() => {});
-  try {
-    instance.widgetFamily = medium ? 'medium' : 'small';
-    await instance.loadResult(true, 'manual');
-    if (instance.result && !instance.result.stale) instance.result.manualRefresh = true;
-    const widget = instance.result ? makeWidget(instance.result, medium, instance.flowMode) : errorWidget(instance.failure, medium);
-    Script.setWidget(widget);
-    const success = instance.result && !instance.result.stale;
-    const message = success ? '查询完成；桌面组件的重绘时间由 iOS 调度。'
-      : instance.result ? '查询未成功，继续显示上次缓存，更新时间保持不变。' : '查询未成功，请从配置菜单检查连接和 Cookie。';
-    const preview = widget.backgroundImage ? 'data:image/png;base64,' + Data.fromPNG(widget.backgroundImage).toBase64String() : '';
-    await view.evaluateJavaScript(`document.getElementById('spin').style.display='none';
-      document.getElementById('status').textContent=${JSON.stringify(success ? '刷新成功' : '刷新失败')};
-      document.getElementById('detail').textContent=${JSON.stringify(message)};
-      document.getElementById('preview').src=${JSON.stringify(preview)};
-      document.getElementById('preview').style.display=${JSON.stringify(preview ? 'block' : 'none')};`);
-  } catch (_) {
-    // 用户提前关闭反馈页也不影响已经完成的数据保存。
-    try { await view.evaluateJavaScript("document.getElementById('spin').style.display='none';document.getElementById('status').textContent='刷新未完成';document.getElementById('detail').textContent='请重新点击组件重试';"); } catch (_) {}
-  }
-  await closed;
-}
-
 async function main() {
   let dependency;
   try { dependency = importModule('DmYY'); }
@@ -1752,11 +1738,10 @@ async function main() {
     const instance = new Widget(args.widgetParameter || '');
     Script.setWidget(await instance.render()); Script.complete(); return;
   }
-  // 卡片点击走独立查询入口，避免 DmYY 仅打开配置菜单而不查数据。
-  if (config.runsInApp && args.queryParameters && args.queryParameters.ufRefresh === '1') {
-    const instance = new Widget(args.queryParameters.ufMode || args.widgetParameter || '');
-    const medium = args.queryParameters.ufFamily === 'medium';
-    await refreshWithFeedback(instance, medium);
+  // 手动运行和旧组件点击链接均只打开配置，不触发查询或写刷新日志。
+  if (config.runsInApp) {
+    const instance = new Widget(args.widgetParameter || '');
+    await instance.renderAppView(instance._menuActions);
     Script.complete(); return;
   }
   await dependency.Runing(Widget, args.widgetParameter || '', false);

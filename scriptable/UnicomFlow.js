@@ -23,7 +23,12 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 const UF_VERSION = '1.0.8';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
 const UF_RUN = { id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
-  startedAt: Date.now(), mainCalls: 0, renderCalls: 0, refreshCalls: 0, entry: 'unknown' };
+  startedAt: Date.now(), mainCalls: 0, renderCalls: 0, refreshCalls: 0, entry: 'unknown', uiEvents: [] };
+
+function traceViewing(action) {
+  UF_RUN.uiEvents.push({ at: Date.now(), action });
+  if (UF_RUN.uiEvents.length > 100) UF_RUN.uiEvents.shift();
+}
 
 const UF = {
   boxjs: 'http://boxjs.net',
@@ -684,6 +689,9 @@ function refreshDiagnostics(executions, at = Date.now()) {
   return '联通流量执行诊断（最近10分钟，最多100条）\n'
     + '运行编号不同：独立脚本运行；编号相同且加载序号递增：同次运行多次加载。\n'
     + '运行环境标记不能判断是桌面重绘、预览还是系统重复调度。\n'
+    + '当前查看运行编号：' + UF_RUN.id + '\n查看操作时间线（仅当前运行内存，不写文件）：\n'
+    + (UF_RUN.uiEvents.length ? UF_RUN.uiEvents.map(event => event.at + ' ' + event.action).join('\n') : '暂无查看操作')
+    + '\n组件执行记录：\n'
     + JSON.stringify(entries.map(entry => ({ at: entry.at, source: entry.source, state: entry.state,
       requested: entry.requested, reason: entry.reason, dataAt: entry.dataAt, trace: entry.trace })), null, 2);
 }
@@ -1428,7 +1436,7 @@ function createWidgetClass(DmYY) {
     loadStoredResult() {
       this.applySettings();
       const saved = this.store.read('history', null), history = migrateSmallCrossDays(saved);
-      if (history !== saved) this.store.write('history', history);
+      if (history !== saved) { this.store.write('history', history); traceViewing('迁移旧跨日数据并写入历史'); }
       this.result = history && history.data ? { history, stale: false, error: '', fromCache: true } : null;
       this.failure = this.result ? '' : '暂无本地用量，请先在菜单点击“立即刷新数据”。';
       return this.result;
@@ -1505,18 +1513,23 @@ function createWidgetClass(DmYY) {
     }
 
     async showUsageStatistics(showRefresh = false) {
+      const page = showRefresh ? '刷新记录' : '用量统计';
+      traceViewing('打开' + page);
       this.loadStoredResult();
+      traceViewing('本地数据读取完成：' + page);
       if (!this.result && showRefresh) this.result = { history: { ...(this.store.read('history', {}) || {}), data: { at: null } }, stale: false };
       if (!this.result) return alertMessage('用量统计', this.failure);
       const view = new WebView();
       await view.loadHTML(statisticsHTML(statisticsReports(this.result.history, Date.now(), this.store.read('refresh-log', [])), this.result.stale, 'hours', showRefresh));
+      traceViewing('HTML加载完成：' + page);
       let clearing = false;
       const stale = this.result.stale;
       view.shouldAllowRequest = request => {
         if (request.url === 'unicomflow://copy-refresh-diagnostics') {
           try {
+            traceViewing('复制诊断');
             Pasteboard.copyString(refreshDiagnostics(this.store.read('refresh-log', [])));
-            alertMessage('已复制诊断', '点击一次小组件后，稍等几秒，再将这里复制的诊断内容发来分析。');
+            alertMessage('已复制诊断', '已包含本次查看操作的时间和组件执行记录，可用于比较打开记录页前后的执行。');
           } catch (_) { alertMessage('复制未完成', '请重新点击复制诊断'); }
           return false;
         }
@@ -1531,7 +1544,9 @@ function createWidgetClass(DmYY) {
         }
         return false;
       };
+      traceViewing('请求显示页面：' + page);
       await view.present();
+      traceViewing('页面关闭：' + page);
     }
 
     async memberDiagnostics() {
@@ -1782,8 +1797,10 @@ async function main() {
   }
   // 手动运行和旧组件点击链接均只打开配置，不触发查询或写刷新日志。
   if (config.runsInApp) {
+    traceViewing('打开配置菜单');
     const instance = new Widget(args.widgetParameter || '');
     await instance.renderAppView(instance._menuActions);
+    traceViewing('配置菜单已提交，App主入口完成');
     Script.complete(); return;
   }
   await dependency.Runing(Widget, args.widgetParameter || '', false);

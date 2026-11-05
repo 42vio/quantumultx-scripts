@@ -1044,6 +1044,10 @@ function distributionFixture() {
   const beforeDiagnosticFiles=new Map(files);
   assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://copy-refresh-diagnostics'}),false);
   assert.ok(copiedDiagnostic.includes('联通流量执行诊断'));assert.ok(copiedDiagnostic.includes('runId'));
+  assert.ok(copiedDiagnostic.includes('查看操作时间线（仅当前运行内存，不写文件）'));
+  assert.ok(copiedDiagnostic.includes('打开刷新记录'));assert.ok(copiedDiagnostic.includes('HTML加载完成：刷新记录'));
+  assert.ok(copiedDiagnostic.includes('请求显示页面：刷新记录'));assert.ok(copiedDiagnostic.includes('复制诊断'));
+
   assert.ok(!copiedDiagnostic.includes('FAKE_TEST_ONLY'));assert.ok(!copiedDiagnostic.includes('JSESSIONID'));
   assert.equal(requestCount,beforeClearRequests);assert.deepEqual(files,beforeDiagnosticFiles);
 

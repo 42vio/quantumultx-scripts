@@ -141,10 +141,12 @@ function distributionFixture() {
   assert.equal(formatMB(515.27),'515.27MB');assert.equal(formatMB(9.87*1024),'9.9GB');
   assert.equal(formatMB(10.39),'10.39MB');assert.equal(formatMB(10.39*1024),'10.4GB');
   assert.equal(formatMB(10.01),'10.01MB');assert.equal(formatMB(10),'10.00MB');
+  assert.equal(formatMB(0.0999,'daily'),'<0.1MB');
+  assert.equal(formatMB(null,'daily'),'—');
   assert.equal(formatMB(0.1,'daily'),'0.1MB');assert.equal(formatMB(0.53,'daily'),'0.5MB');
-  assert.equal(formatMB(0.09,'daily'),'0.09MB');assert.equal(formatMB(0.001,'daily'),'<0.01MB');
+  assert.equal(formatMB(0.09,'daily'),'<0.1MB');assert.equal(formatMB(0.001,'daily'),'<0.1MB');
   assert.equal(formatMB(0),'0MB');assert.equal(formatMB(0,'daily'),'0MB');
-  assert.equal(formatMB(0.03),'0.03MB');assert.equal(formatMB(0.03,'daily'),'0.03MB');
+  assert.equal(formatMB(0.03),'0.03MB');assert.equal(formatMB(0.03,'daily'),'<0.1MB');
   assert.equal(formatMB(954.53),'954.53MB');assert.equal(formatMB(954.53,'daily'),'954.5MB');
   assert.equal(formatMB(1.23*1024,'daily'),'1.2GB');assert.equal(formatMB(10.39*1024,'daily'),'10.4GB');
   assert.equal(formatMB(120*1024,'total'),'120GB');assert.equal(formatMB(500,'total'),'500MB');
@@ -224,7 +226,7 @@ function distributionFixture() {
   for(const [value,expected] of [[6.8*1024,'6.8'],[0.53*1024,'0.53'],[0.001*1024,'<0.01'],[0,'0'],[null,'—']]) assert.equal(api.formatGB(value),expected);
   assert.equal(api.formatGB(120*1024,true),'120');assert.equal(api.formatGB(80.5*1024,true),'80.5');
   for(const [parameter,mode] of [['','month'],['month','month'],[' today ','today'],['TODAY','today'],['unknown','month']]) assert.equal(api.widgetMode(parameter),mode);
-  assert.equal(formatMB(0.001,'daily'),'<0.01MB');
+  assert.equal(formatMB(0.001,'daily'),'<0.1MB');
   const reusableStart=updateHistory(null,cardSample(at,0,200,300));
   const reusable=updateHistory(reusableStart,cardSample(at+3600000,0,230,350));
   const reusableIds=api.displayMetrics(reusable.data);

@@ -147,8 +147,9 @@ function formatMB(value, mode = 'usage') {
   if (value === 0) return '0MB';
   const scale = value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
   const displayed = value / scale[0];
-  const digits = mode === 'daily' ? (value < 0.1 ? 2 : 1) : value < 1024 ? 2 : 1;
-  const number = displayed > 0 && displayed < 0.01 ? '<0.01' : displayed.toFixed(digits);
+  const digits = mode === 'daily' ? 1 : value < 1024 ? 2 : 1;
+  const minimum = mode === 'daily' ? 0.1 : 0.01;
+  const number = displayed > 0 && displayed < minimum ? '<' + minimum : displayed.toFixed(digits);
   return `${mode === 'total' && !number.startsWith('<') ? String(Number(number)) : number}${scale[1]}`;
 }
 

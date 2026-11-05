@@ -7,6 +7,7 @@
 2. 联通官方 App 首页 → 流量，收到 Cookie 写入成功通知。
 3. 将 DmYY.js 放入同一 Scriptable 脚本目录，再新建脚本粘贴本文件。
 4. 运行后在 DmYY 菜单中预览、配置和刷新数据，再添加桌面组件。
+5. 小组件 Parameter 留空或 month 显示本月，填 today 显示今日已记录用量。
 直接读取 http://boxjs.net/query/data/@YaYa_10010.cookie。
 Cookie 只在请求时读取，不写入文件、不打印日志；文件只保存流量快照。
 支持黑色/白色主题。可识别共享与非共享通用套餐时分开显示，否则显示通用/定向。
@@ -115,9 +116,11 @@ function displayMetrics(data) {
   // 能识别两种套餐时分开显示；不根据 120GB/80GB 数值猜测套餐归属。
   if (shared.length && exclusive.length) {
     const omitted = data.packages.some(p => p.category !== 'ignore' && (p.category !== 'general' || p.shared == null));
-    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '共享流量', rightLabel: '主卡独享', omitted };
+    return { left: { ...sumPackages(shared), composition }, right: sumPackages(exclusive), leftLabel: '共享流量', rightLabel: '主卡独享', omitted, leftIds: shared.map(p => p.id), rightIds: exclusive.map(p => p.id) };
   }
-  return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false };
+  return { left: data.categories.general, right: data.categories.directed, leftLabel: '通用', rightLabel: '定向', omitted: false,
+    leftIds: data.packages.filter(p => p.category === 'general').map(p => p.id),
+    rightIds: data.packages.filter(p => p.category === 'directed').map(p => p.id) };
 }
 
 function finiteNumber(value) {
@@ -144,9 +147,36 @@ function formatMB(value, mode = 'usage') {
   if (value === 0) return '0MB';
   const scale = value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
   const displayed = value / scale[0];
-  const digits = mode === 'daily' || value < 1 ? 2 : 1;
-  const number = displayed.toFixed(digits);
-  return `${mode === 'total' ? String(Number(number)) : number}${scale[1]}`;
+  const digits = mode === 'daily' || value < 1024 ? 2 : 1;
+  const number = displayed > 0 && displayed < 0.01 ? '<0.01' : displayed.toFixed(digits);
+  return `${mode === 'total' && !number.startsWith('<') ? String(Number(number)) : number}${scale[1]}`;
+}
+
+function widgetMode(parameter) {
+  return String(parameter || '').trim().toLowerCase() === 'today' ? 'today' : 'month';
+}
+
+function formatGB(value, quota = false) {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value === 0) return '0';
+  const gb = value / 1024;
+  if (gb < 0.01) return '<0.01';
+  const fixed = gb.toFixed(quota || gb < 1 ? 2 : 1);
+  return quota ? String(Number(fixed)) : fixed;
+}
+
+// 只使用明确保存的套餐增量，旧逐卡历史不能反推共享／独享今日用量。
+function todayPackageUsage(history, ids, at) {
+  if (!ids.length) return null;
+  let used = 0, samples = 0;
+  for (const event of history.events || []) {
+    if (!Number.isFinite(event.from) || !Number.isFinite(event.at) || event.from >= event.at || event.at > at
+      || dayKey(event.from) !== dayKey(at) || dayKey(event.at) !== dayKey(at) || !Array.isArray(event.packageDeltas)) continue;
+    const values = ids.map(id => event.packageDeltas.find(row => row.id === id));
+    if (values.some(row => !row || !Number.isFinite(row.mb) || row.mb < 0)) continue;
+    used += values.reduce((sum, row) => sum + row.mb, 0); samples++;
+  }
+  return samples ? used : null;
 }
 
 function dayKey(time) {
@@ -572,7 +602,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
     const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:0}};
-    const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return value===0?'0 MB':displayed.toFixed(2)+(value>=1024?' GB':' MB');};
+    const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return value===0?'0 MB':(displayed<0.01?'<0.01':displayed.toFixed(2))+(value>=1024?' GB':' MB');};
     const totalFor=(report,key)=>report.period==='months'?report.average[key]:report.summary?report.summary[key]:report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
     const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
     const status=d=>current==='year'&&d.mb!=null?(d.key===report.month?'本月进行中':d.partial?'部分记录':'已结束'):d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
@@ -639,7 +669,8 @@ function updateHistory(previous, sample) {
       delta += p.used - before;
     }
     if (valid) {
-      interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample) };
+      interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample),
+        packageDeltas: sample.packages.filter(p => p.category !== 'ignore').map(p => ({ id: p.id, mb: p.used - lastUse.get(p.id) })) };
       // 跨午夜的区间不能归为“今日”用量；不拆分或插值。
       if (dayKey(prev.at) === dayKey(sample.at)) events.push(interval);
       note = '今日区间增量 · 按采样时刻';
@@ -755,7 +786,7 @@ function numberFont(size, kind = 'usage') {
 // 绘图接口没有文字测量能力，按偏保守的字符宽度给数字与单位分配空间。
 function numberWidth(value, size, kind) {
   const system = normalizedNumberFont(UF[kind + 'Font']).startsWith('系统');
-  return [...value].reduce((sum, ch) => sum + (/[\u3400-\u9fff]/.test(ch) ? 1 : system ? (ch === '.' || ch === ' ' ? 0.32 : 0.66) : 0.62), 0) * size;
+  return [...value].reduce((sum, ch) => sum + (/[\u3400-\u9fff]/.test(ch) ? 1 : system ? (ch === '.' || ch === ' ' ? 0.28 : ch === '/' ? 0.30 : /[0-9]/.test(ch) ? 0.60 : 0.66) : 0.62), 0) * size;
 }
 
 function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false, medium = false) {
@@ -774,10 +805,10 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
   ctx.fillPath();
 }
 
-function drawMetric(ctx, metric, label, x, y, width, compact) {
+function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dailyUsed = null) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
-  const primary = formatMB(metric && metric.used);
+  text(ctx, today ? title + ' · 今日' : title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
+  const primary = formatMB(today ? dailyUsed : metric && metric.used, today ? 'daily' : 'usage');
   const textX = x + 10, textWidth = width - 10;
   // 等宽字体的普通空格过宽，数字与单位分开绘制，同字号并只留 2 点间距。
   const parts = primary.match(/^(.*?)(MB|GB)$/);
@@ -792,7 +823,8 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   }
   let detail = '未返回明细';
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')}(${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
-  const totalParts = detail.match(/^(\d+(?:\.\d+)?)(MB|GB)(.*)$/);
+  if (today && metric) detail = metric.total == null ? `${formatGB(metric.used)} GB / 不限量` : `${formatGB(metric.used)}/${formatGB(metric.total, true)}GB`;
+  const totalParts = detail.match(/^(.*?)(MB|GB)(.*)$/);
   if (totalParts) {
     const gap = 2;
     const size = Math.min(UF.totalFontSize, (textWidth - gap) / Math.max(1, numberWidth(detail, 1, 'total')));
@@ -816,7 +848,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
       if (c.main > 0) bar(barY + barH - mainHeight, mainHeight, UF.blue);
       if (c.vice > 0) bar(barY + barH - mainHeight - viceHeight, viceHeight, UF.purple);
     }
-    if (!(c.complete && c.main === 0)) {
+    if (!today && !(c.complete && c.main === 0)) {
       const half = width / 2;
       roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
       roundedRect(ctx, x + half, y + 63, 2.5, 2.5, 1.25, UF.purple);
@@ -829,7 +861,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact) {
   }
 }
 
-function renderImage(result, medium, width, height) {
+function renderImage(result, medium, width, height, mode = 'month') {
   // 统一为 158 点设计高度，再随组件尺寸缩放，避免小屏沿用固定坐标而挤入圆角。
   width = Math.round(width * 158 / height);
   height = 158;
@@ -841,15 +873,17 @@ function renderImage(result, medium, width, height) {
   ctx.fillRect(new Rect(0, 0, width, height));
   const data = result.history.data, pad = 13;
   const metrics = displayMetrics(data);
+  const today = widgetMode(mode) === 'today';
+  const daily = today ? [todayPackageUsage(result.history, metrics.leftIds, Date.now()), todayPackageUsage(result.history, metrics.rightIds, Date.now())] : [];
   const buckets = medium ? todayBuckets(result.history, Date.now()) : [];
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false, today, daily[0]);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false, today, daily[1]);
     const chartX = pad, chartY = 99, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
     const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
-    text(ctx, '今日用量',
+    text(ctx, today ? '小时用量' : '今日用量',
       chartX, 84, chartW - 80, 12, 8, UF.muted);
     buckets.forEach((bucket, hour) => {
       const center = chartX + (hour + 0.5) * cell;
@@ -874,8 +908,8 @@ function renderImage(result, medium, width, height) {
     });
     [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
   } else {
-    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, width - 2 * pad, true);
-    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true);
+    drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, width - 2 * pad, true, today, daily[0]);
+    drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true, today, daily[1]);
   }
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
@@ -887,7 +921,7 @@ function renderImage(result, medium, width, height) {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
+  text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
     const legendY = 78;
@@ -896,8 +930,8 @@ function renderImage(result, medium, width, height) {
     const legends = [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].map(([color, name, key]) => {
       const used = buckets.reduce((sum, b) => sum + b[key], 0);
       // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
-      const value = sampled && (used > 0 || unknown === 0) ? formatMB(used, 'daily') : '—';
-      return { color, caption: name + ' ' + value };
+      const value = !sampled ? '待采样' : used === 0 && unknown > 0 ? '未确认' : formatMB(used, 'daily');
+      return { color, caption: today ? name + '卡' : name + ' ' + value };
     });
     // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
     const captionWidth = Math.min(65, Math.ceil(Math.max(...legends.map(({ caption }) =>
@@ -923,18 +957,18 @@ function widgetSize(medium) {
   return { width: medium ? closest[2] : closest[1], height: closest[1] };
 }
 
-function refreshURL(medium) {
-  return 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) + '&ufRefresh=1&ufFamily=' + (medium ? 'medium' : 'small');
+function refreshURL(medium, mode = 'month') {
+  return 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) + '&ufRefresh=1&ufFamily=' + (medium ? 'medium' : 'small') + '&ufMode=' + widgetMode(mode);
 }
 
-function makeWidget(result, medium) {
+function makeWidget(result, medium, mode = 'month') {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
   widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
-  widget.backgroundImage = renderImage(result, medium, size.width, size.height);
+  widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
   if (medium) {
     // 仅右上角 44×44 区域刷新，其他位置不设链接，遵循用户的小组件点击设置。
     const row = widget.addStack(); row.layoutHorizontally(); row.spacing = 0;
@@ -943,7 +977,7 @@ function makeWidget(result, medium) {
     content.addSpacer();
     const right = row.addStack(); right.layoutVertically(); right.spacing = 0;
     right.size = new Size(44, size.height);
-    for (const [height, url] of [[44, refreshURL(true)], [size.height - 44, null]]) {
+    for (const [height, url] of [[44, refreshURL(true, mode)], [size.height - 44, null]]) {
       const area = right.addStack(); area.size = new Size(44, height);
       if (url) area.url = url;
       area.setPadding(0, 0, 0, 0); area.addSpacer();
@@ -1012,6 +1046,7 @@ function createWidgetClass(DmYY) {
   return class UnicomFlowWidget extends DmYY {
     constructor(arg) {
       super(arg);
+      this.flowMode = widgetMode(arg);
       // 已有数字字体迁移到两个独立选项，不改变历史数据。
       let changed = false;
       if (Object.prototype.hasOwnProperty.call(this.settings, 'displayMode')) {
@@ -1073,7 +1108,7 @@ function createWidgetClass(DmYY) {
     async render() {
       if (!['small', 'medium'].includes(this.widgetFamily)) return errorWidget('请添加小号或中号组件');
       await this.loadResult();
-      return this.result ? makeWidget(this.result, this.widgetFamily === 'medium') : errorWidget(this.failure, this.widgetFamily === 'medium');
+      return this.result ? makeWidget(this.result, this.widgetFamily === 'medium', this.flowMode) : errorWidget(this.failure, this.widgetFamily === 'medium');
     }
 
     // Runing 根据这些方法生成“小尺寸 / 中尺寸”预览入口。
@@ -1264,7 +1299,7 @@ async function refreshWithFeedback(instance, medium) {
     instance.widgetFamily = medium ? 'medium' : 'small';
     await instance.loadResult();
     if (instance.result && !instance.result.stale) instance.result.manualRefresh = true;
-    const widget = instance.result ? makeWidget(instance.result, medium) : errorWidget(instance.failure, medium);
+    const widget = instance.result ? makeWidget(instance.result, medium, instance.flowMode) : errorWidget(instance.failure, medium);
     Script.setWidget(widget);
     const success = instance.result && !instance.result.stale;
     const message = success ? '查询完成；桌面组件的重绘时间由 iOS 调度。'
@@ -1294,7 +1329,7 @@ async function main() {
   const Widget = createWidgetClass(dependency.DmYY);
   // 卡片点击走独立查询入口，避免 DmYY 仅打开配置菜单而不查数据。
   if (config.runsInApp && args.queryParameters && args.queryParameters.ufRefresh === '1') {
-    const instance = new Widget(args.widgetParameter || '');
+    const instance = new Widget(args.queryParameters.ufMode || args.widgetParameter || '');
     const medium = args.queryParameters.ufFamily === 'medium';
     await refreshWithFeedback(instance, medium);
     Script.complete(); return;

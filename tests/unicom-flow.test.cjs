@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -138,12 +138,12 @@ function distributionFixture() {
   assert.equal(formatMB(base.categories.general.used), '2.3GB');
   assert.equal(formatMB(null), '—');
   assert.equal(formatMB(12.03*1024),'12.0GB');assert.equal(formatMB(37.77*1024),'37.8GB');
-  assert.equal(formatMB(515.27),'515.3MB');assert.equal(formatMB(9.87*1024),'9.9GB');
-  assert.equal(formatMB(10.39),'10.4MB');assert.equal(formatMB(10.39*1024),'10.4GB');
-  assert.equal(formatMB(10.01),'10.0MB');assert.equal(formatMB(10),'10.0MB');
+  assert.equal(formatMB(515.27),'515.27MB');assert.equal(formatMB(9.87*1024),'9.9GB');
+  assert.equal(formatMB(10.39),'10.39MB');assert.equal(formatMB(10.39*1024),'10.4GB');
+  assert.equal(formatMB(10.01),'10.01MB');assert.equal(formatMB(10),'10.00MB');
   assert.equal(formatMB(0),'0MB');assert.equal(formatMB(0,'daily'),'0MB');
   assert.equal(formatMB(0.03),'0.03MB');assert.equal(formatMB(0.03,'daily'),'0.03MB');
-  assert.equal(formatMB(954.53),'954.5MB');assert.equal(formatMB(954.53,'daily'),'954.53MB');
+  assert.equal(formatMB(954.53),'954.53MB');assert.equal(formatMB(954.53,'daily'),'954.53MB');
   assert.equal(formatMB(1.23*1024,'daily'),'1.23GB');assert.equal(formatMB(10.39*1024,'daily'),'10.39GB');
   assert.equal(formatMB(120*1024,'total'),'120GB');assert.equal(formatMB(500,'total'),'500MB');
   assert.equal(formatMB(80.5*1024,'total'),'80.5GB');assert.equal(formatMB(0.03,'total'),'0.03MB');
@@ -206,11 +206,29 @@ function distributionFixture() {
   assert.equal(retainedCards.events.length,2);assert.equal(retainedCards.events[0].mb,90);
   assert.equal(retainedCards.events[1].mainMB,20);assert.equal(retainedCards.events[1].viceMB,10);
 
+  const packageIds=api.displayMetrics(cardNext.data);
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at+3600000),40);
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.rightIds,at+3600000),50);
+  assert.equal(api.todayPackageUsage(cardStart,packageIds.leftIds,at),null);
+  const noPackageHistory={...cardNext,events:cardNext.events.map(({packageDeltas,...event})=>event)};
+  assert.equal(api.todayPackageUsage(noPackageHistory,packageIds.leftIds,at+3600000),null);
+  const zeroPackages=updateHistory(cardNext,cardSample(at+7200000,110,230,350));
+  assert.equal(api.todayPackageUsage({...zeroPackages,events:zeroPackages.events.slice(-1)},packageIds.leftIds,at+7200000),0);
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at),null); // 不计未来事件
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,midnight),null); // 不计昨天
+  assert.equal(api.todayPackageUsage(cardNext,[],at+3600000),null);
+  const invalidPackages={...cardNext,events:cardNext.events.map(e=>({...e,packageDeltas:[{id:packageIds.leftIds[0],mb:-1}]}))};
+  assert.equal(api.todayPackageUsage(invalidPackages,packageIds.leftIds,at+3600000),null);
+  for(const [value,expected] of [[6.8*1024,'6.8'],[0.53*1024,'0.53'],[0.001*1024,'<0.01'],[0,'0'],[null,'—']]) assert.equal(api.formatGB(value),expected);
+  assert.equal(api.formatGB(120*1024,true),'120');assert.equal(api.formatGB(80.5*1024,true),'80.5');
+  for(const [parameter,mode] of [['','month'],['month','month'],[' today ','today'],['TODAY','today'],['unknown','month']]) assert.equal(api.widgetMode(parameter),mode);
+  assert.equal(formatMB(0.001,'daily'),'<0.01MB');
   const cardBuckets=todayBuckets(cardNext,at);
   assert.equal(cardBuckets[11].mainMB,60);assert.equal(cardBuckets[11].viceMB,30);
   const cardMonth=api.monthlyReport(cardNext,at);
   assert.equal(cardMonth.days[2].mainMB,60);assert.equal(cardMonth.days[2].viceMB,30);
   const unknownCard=updateHistory(cardStart,cardSample(at+3600000,110,230,350,false));
+  assert.equal(api.todayPackageUsage(unknownCard,packageIds.leftIds,at+3600000),40); // 套餐今日用量不受成员缺失影响
   assert.equal(unknownCard.events[0].mainMB,50);assert.equal(unknownCard.events[0].unknownMB,40);
   const memberRollback=updateHistory(cardStart,cardSample(at+3600000,90,250,350));
   assert.equal(memberRollback.events[0].mainMB,50);assert.equal(memberRollback.events[0].unknownMB,40);
@@ -379,6 +397,10 @@ function distributionFixture() {
   fractionalHTML=api.statisticsHTML(fractionalReports);
   new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'10.39 GB');
+  fractionalReports.month.days[2].mb=0.001;
+  fractionalHTML=api.statisticsHTML(fractionalReports);
+  new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'<0.01 MB');
   const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
   fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',averageHTML);
   api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports));api.applyTheme({theme:'黑色'});
@@ -473,15 +495,31 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158);
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
-  assert.ok(dayImage.includes('>今日用量</text>'));assert.ok(dayImage.includes('>主 —</text>'));assert.ok(dayImage.includes('>副 —</text>'));
+  assert.ok(dayImage.includes('>今日用量</text>'));assert.ok(dayImage.includes('>主 待采样</text>'));assert.ok(dayImage.includes('>副 待采样</text>'));
   assert.ok(zeroImage.includes('>主 0MB</text>'));assert.ok(zeroImage.includes('>副 0MB</text>'));
   assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
   const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158);
-  assert.ok(unknownImage.includes('>主 —</text>'));assert.ok(unknownImage.includes('>副 —</text>'));
+  assert.ok(unknownImage.includes('>主 未确认</text>'));assert.ok(unknownImage.includes('>副 未确认</text>'));
 
 
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
+  for(const medium of [false,true]) {
+    const todayImage=noonVisual.renderImage({history:cardAtNoon,stale:false},medium,medium?338:158,158,'today');
+    assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
+    assert.ok(todayImage.includes('>40.00</text>'));assert.ok(todayImage.includes('>50.00</text>'));
+    assert.ok(todayImage.includes('>0.33/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
+    assert.ok(!/>[^<]*%[^<]*<\/text>/.test(todayImage));assert.ok(!todayImage.includes('本月'));
+    assert.ok(todayImage.includes('今日已记录'));assert.ok(!todayImage.includes('主 60.00MB'));
+    if(medium) {assert.ok(todayImage.includes('>主卡</text>'));assert.ok(todayImage.includes('>副卡</text>'));assert.ok(todayImage.includes('小时用量'));}
+    const missingImage=noonVisual.renderImage({history:{...cardAtNoon,events:[]},stale:false},medium,medium?338:158,158,'today');
+    assert.ok(missingImage.includes('>—</text>'));assert.ok(!missingImage.includes('>0</text>'));assert.ok(missingImage.includes('今日待采样'));
+    const zeroImage=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:0,packageDeltas:e.packageDeltas.map(p=>({...p,mb:0}))}))},stale:false},medium,medium?338:158,158,'today');
+    assert.ok(zeroImage.includes('>0</text>'));assert.ok(zeroImage.includes('今日已记录'));
+    fs.writeFileSync(`${output}/${medium?'medium':'small'}-today.svg`,todayImage);
+  }
+  const zeroMainLegend=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:30,mainMB:0,viceMB:30,unknownMB:0}))},stale:false},true,338,158);
+  assert.ok(zeroMainLegend.includes('>主 0MB</text>')); // 已确认零用量不会留空
   const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
   const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
   assert.equal(unevenLegends.length,2);assert.equal(unevenLegends[0][1],unevenLegends[1][1]);
@@ -620,6 +658,10 @@ function distributionFixture() {
     } else { assert.equal(widget.url,undefined);assert.equal(widget.children.length,0);assert.ok(!widget.backgroundImage.includes('↻')); }
 
   }
+  const todayTapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'medium',ufMode:'today'}}});
+  await todayTapApi.main();
+  assert.ok(widget.backgroundImage.includes('今日'));
+  assert.equal(new URL(widget.children[0].children[1].children[0].url).searchParams.get('ufMode'),'today');
   apiError=true;
   const staleApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufRefresh:'1',ufFamily:'small'}}});
   await staleApi.main(); assert.ok(feedback.at(-1).updates.join('').includes('刷新失败'));assert.ok(widget.backgroundImage.includes('缓存')); assert.ok(!widget.backgroundImage.includes('点击刷新'));
@@ -665,6 +707,13 @@ function distributionFixture() {
   instance.settings.flowBarColor='#ABCDEF';
   await instance.renderSmall(); assert.equal(instance.widgetFamily,'small');
   await instance.renderMedium(); assert.equal(instance.widgetFamily,'medium');
+  const todayInstance=new AppWidget('today');
+  assert.equal(todayInstance.flowMode,'today');
+  assert.equal(new AppWidget('month').flowMode,'month');
+  for(const family of ['small','medium']) {
+    const w=family==='small'?await todayInstance.renderSmall():await todayInstance.renderMedium();
+    assert.ok(w.backgroundImage.includes(' · 今日'));
+  }
   const fontAction=instance._menuActions.flatMap(group=>group.menu).find(item=>item.name==='flowFonts');
   assert.ok(fontAction);
   const typography=await fontAction.onClick();
@@ -685,7 +734,7 @@ function distributionFixture() {
     const totals=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*font-family="sans-serif" font-weight="500" font-size="11">([^<]+)<\/text>/g)];
     const totalNumber=totals.find(row=>row[3]==='27'), totalUnit=totals.find(row=>row[3]==='GB(9%)');
     assert.ok(totalNumber && totalUnit);assert.equal(totalNumber[2],totalUnit[2]);
-    assert.ok(Math.abs(Number(totalUnit[1])-Number(totalNumber[1])-2*11*0.66-2)<1e-8);
+    assert.ok(Math.abs(Number(totalUnit[1])-Number(totalNumber[1])-2*11*0.60-2)<1e-8);
     const runs=[...w.backgroundImage.matchAll(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*font-family="Menlo,monospace" font-weight="500" font-size="([0-9.]+)">([^<]+)<\/text>/g)];
     const number=runs.find(row=>row[4]==='2.3'), unit=runs.find(row=>row[4]==='GB');
     assert.ok(number && unit);assert.equal(number[2],unit[2]);assert.equal(number[3],unit[3]);
@@ -793,5 +842,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: month/today参数独立渲染及刷新保留模式/今日按套餐增量/旧记录保留不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

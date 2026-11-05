@@ -901,6 +901,9 @@ function distributionFixture() {
   assert.equal(secondCall.trace.call,2);assert.ok(initialExecutions.some(item=>item.trace.runId===secondCall.trace.runId));
   assert.equal(twentyPast.fromCache,true);assert.equal(cacheQueries,1);assert.equal(twentyPast.history.data.at,successAt);assert.equal(twentyPast.history.queryTimes.length,1);
   const cachedWidget=cacheApis[1].makeWidget(twentyPast,true);
+  const mediumTapURL=new URL(cachedWidget.url);assert.equal(mediumTapURL.searchParams.get('scriptName'),'联通流量');assert.equal(mediumTapURL.searchParams.get('ufAction'),'statistics');
+  assert.equal(cacheApis[1].makeWidget(twentyPast,false).url,undefined);
+
   assert.equal(cachedWidget.refreshAfterDate.getTime(),deadline); // 10:20读取仍建议10:30，不能变10:50
   // 独立设置组件和请求间隔：缓存读取不改查询时间，按较早期限建议运行。
   const intervalApi=await load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest});
@@ -1046,6 +1049,11 @@ function distributionFixture() {
   apiError=true;await immediate.onClick();assert.equal(alerts.at(-1).title,'刷新未完成');
   assert.equal(files.get('/documents/UnicomFlow/history.json'),successfulBeforeFailure);apiError=false;
   const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics);
+  const mediumTapApi=await load.runInNewContext({...environment,config:{runsInApp:true,runsInWidget:false},args:{queryParameters:{ufAction:'statistics'}}});
+  const beforeMediumTapFiles=new Map(files), beforeMediumTapRequests=requestCount;
+  await mediumTapApi.main();assert.equal(requestCount,beforeMediumTapRequests);assert.deepEqual(files,beforeMediumTapFiles);
+  assert.ok(feedback.at(-1).html.includes('id="tab-hours"'));assert.ok(!feedback.at(-1).html.includes('配置内容'));
+
   assert.ok(feedback.at(-1).html.includes('tab-hours'));assert.ok(feedback.at(-1).html.includes('tab-year'));
   const recordMenu=menus.find(item=>item.name==='flowRefreshRecords');assert.equal(recordMenu.title,'刷新记录');
   const beforeRecordsRequest=requestCount, beforeRecordsFiles=new Map(files);

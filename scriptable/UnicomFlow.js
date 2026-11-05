@@ -1305,6 +1305,7 @@ function makeWidget(result, medium, mode = 'month') {
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
+  if (medium) widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics`;
 
   return widget;
 }
@@ -1317,6 +1318,7 @@ function errorWidget(message, medium = false) {
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
+  if (medium) widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics`;
   return widget;
 }
 
@@ -1818,8 +1820,13 @@ async function main() {
   }
   // 手动运行和旧组件点击链接均只打开配置，不触发查询或写刷新日志。
   if (config.runsInApp) {
-    traceViewing('打开配置菜单');
     const instance = new Widget(args.widgetParameter || '');
+    if (args.queryParameters && args.queryParameters.ufAction === 'statistics') {
+      traceViewing('中号卡片点击入口：用量统计');
+      await instance.showUsageStatistics();
+      return;
+    }
+    traceViewing('打开配置菜单');
     await instance.renderAppView(instance._menuActions);
     // DmYY 页面仍有后续交互，不在菜单刚提交时主动通知宿主脚本完成。
     traceViewing('配置菜单已提交（未主动结束脚本）');

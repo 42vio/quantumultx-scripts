@@ -768,7 +768,8 @@ function storage() {
       catch (_) { return fallback; }
     },
     write(name, value) { fm.writeString(fm.joinPath(dir, name + '.json'), JSON.stringify(value)); },
-    clear() { const path = fm.joinPath(dir, 'history.json'); if (fm.fileExists(path)) fm.remove(path); },
+    remove(name) { const path = fm.joinPath(dir, name + '.json'); if (fm.fileExists(path)) fm.remove(path); },
+    clear() { this.remove('history'); },
   };
 }
 
@@ -821,16 +822,54 @@ async function fetchData(cookie, overrides) {
   throw error || new Error('联通明细接口暂时不可用，请稍后重试');
 }
 
-async function refresh(store) {
-  const cookie = await readCookie();
-  const session = sessionTag(cookie);
+function queryDeadline(history) {
+  const at = history && history.data && history.data.at;
+  if (!Number.isFinite(at)) return null;
+  const midnight = new Date(at); midnight.setHours(24,0,0,0);
+  return Math.min(at + UF.refreshMinutes * 60000, midnight.getTime());
+}
+
+function reusableHistory(history, session, now) {
+  return history && history.version === 1 && history.cardHistoryVersion === 1 && history.session === session
+    && history.data && Number.isFinite(history.data.at) && history.data.at <= now && now < queryDeadline(history);
+}
+
+function pauseQuery(ms) {
+  return new Promise(resolve => Timer.schedule(ms, false, resolve));
+}
+
+async function refresh(store, force = false) {
+  const started = Date.now();
+  // 每次核对当前 Cookie，避免缓存命中后掩盖换号；仅联通查询共用缓存。
+  const cookie = await readCookie(), session = sessionTag(cookie);
   const previous = store.read('history', null);
   if (previous && previous.session !== session) store.clear();
-  const data = await fetchData(cookie, store.read('categories', {}));
-  const sample = { ...data, at: Date.now(), session };
-  const history = updateHistory(store.read('history', null), sample);
-  store.write('history', history);
-  return { history, stale: false, error: '' };
+  if (!force && reusableHistory(previous, session, Date.now())) return { history: previous, stale: false, error: '', fromCache: true };
+  const owner = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  let waited = false;
+  // 临时请求锁只存标识和过期时间，不保存 Cookie；查询结束删除，异常退出后30秒失效。
+  for (let i = 0; i < 32; i++) {
+    const latest = store.read('history', null);
+    if ((!force || waited) && reusableHistory(latest, session, Date.now()) && (!force || latest.data.at >= started)) {
+      return { history: latest, stale: false, error: '', fromCache: true };
+    }
+    const pending = store.read('query-lock', null);
+    if (pending && pending.expiresAt > Date.now()) { waited = true; await pauseQuery(250); continue; }
+    store.write('query-lock', { owner, expiresAt: Date.now() + 30000 });
+    // 写入后让同时启动的组件先合并，再确认自己仍是本次请求的持有者。
+    await pauseQuery(80);
+    if ((store.read('query-lock', {}) || {}).owner !== owner) { waited = true; continue; }
+    try {
+      const data = await fetchData(cookie, store.read('categories', {}));
+      const sample = { ...data, at: Date.now(), session };
+      const history = updateHistory(store.read('history', null), sample);
+      store.write('history', history);
+      return { history, stale: false, error: '', fromCache: false };
+    } finally {
+      if ((store.read('query-lock', {}) || {}).owner === owner) store.remove('query-lock');
+    }
+  }
+  throw new Error('其他组件正在查询，请稍后再试');
 }
 
 // ---- 所有布局均由 Scriptable 原生绘图生成 ----
@@ -1036,7 +1075,7 @@ function makeWidget(result, medium, mode = 'month') {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
   widget.setPadding(0, 0, 0, 0);
-  widget.refreshAfterDate = new Date(Date.now() + UF.refreshMinutes * 60000);
+  widget.refreshAfterDate = new Date(result.stale ? Date.now() + 5 * 60000 : Math.max(Date.now() + 1000, queryDeadline(result.history) || Date.now() + UF.refreshMinutes * 60000));
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
@@ -1151,10 +1190,10 @@ function createWidgetClass(DmYY) {
       }
     }
 
-    async loadResult() {
+    async loadResult(force = false) {
       this.result = null;
       this.failure = '';
-      try { this.applySettings(); this.result = await refresh(this.store); }
+      try { this.applySettings(); this.result = await refresh(this.store, force); }
       catch (error) {
         this.failure = error.message || '查询失败';
         const old = this.store.read('history', null);
@@ -1209,8 +1248,8 @@ function createWidgetClass(DmYY) {
     }
 
     async refreshFromQX() {
-      await this.loadResult();
-      await alertMessage('代理缓存', this.failure || '已直接读取 QX 的联通 Cookie 并刷新套餐。现在可预览组件；Cookie 不会保存到组件设置。');
+      await this.loadResult(true);
+      await alertMessage(this.failure ? '刷新未完成' : '刷新完成', this.failure || '已读取 QX 保存的 Cookie 并查询最新流量数据，共享记录已更新。桌面组件的重绘时间由 iOS 决定。');
     }
 
     async showMembers() {
@@ -1249,7 +1288,7 @@ function createWidgetClass(DmYY) {
     }
 
     async connectionStatus() {
-      await this.loadResult();
+      await this.loadResult(true);
       await alertMessage('连接检查', this.failure || `QX Cookie：已读取\n套餐接口：成功\n识别流量包：${this.result.history.data.packages.length}\n${this.result.history.data.warnings.join('\n')}\n\nCookie 未写入文件或日志。`);
     }
 
@@ -1341,11 +1380,11 @@ function createWidgetClass(DmYY) {
       ] });
       this.registerAction({ title: '账户与数据', menu: [
         action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
-          '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“代理缓存”刷新。')),
+          '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“立即刷新数据”。')),
         action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
         action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
         action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
-        action('flowProxy', '代理缓存', 'shippingbox.fill', '#34C759', () => this.refreshFromQX()),
+        action('flowProxy', '立即刷新数据', 'arrow.clockwise', '#34C759', () => this.refreshFromQX()),
         action('flowStatus', '连接检查', 'network', '#007AFF', () => this.connectionStatus()),
       ] });
       this.registerAction({ title: '基础设置', menu: [
@@ -1369,7 +1408,7 @@ async function refreshWithFeedback(instance, medium) {
   const closed = view.present().catch(() => {});
   try {
     instance.widgetFamily = medium ? 'medium' : 'small';
-    await instance.loadResult();
+    await instance.loadResult(true);
     if (instance.result && !instance.result.stale) instance.result.manualRefresh = true;
     const widget = instance.result ? makeWidget(instance.result, medium, instance.flowMode) : errorWidget(instance.failure, medium);
     Script.setWidget(widget);
@@ -1399,6 +1438,11 @@ async function main() {
     Script.complete(); return;
   }
   const Widget = createWidgetClass(dependency.DmYY);
+  // 自行发布组件，防止 DmYY.Runing 把共享截止时间覆盖为“现在＋间隔”。
+  if (config.runsInWidget) {
+    const instance = new Widget(args.widgetParameter || '');
+    Script.setWidget(await instance.render()); Script.complete(); return;
+  }
   // 卡片点击走独立查询入口，避免 DmYY 仅打开配置菜单而不查数据。
   if (config.runsInApp && args.queryParameters && args.queryParameters.ufRefresh === '1') {
     const instance = new Widget(args.queryParameters.ufMode || args.widgetParameter || '');

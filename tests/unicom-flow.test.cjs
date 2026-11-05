@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {queryDeadline, reusableHistory, refresh, storage, makeWidget, widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -675,7 +675,7 @@ function distributionFixture() {
       if(apiError)throw new Error('offline');
       if(formBroken && this.body) return JSON.stringify({code:'9999'});
       return rawResponse===null?JSON.stringify(dataPayload):rawResponse;}
-    async loadJSON(){requestCount++; if(this.url.includes('/query/data/')) return {val:'JSESSIONID=FAKE_TEST_ONLY;'};
+    async loadJSON(){requestCount++; if(this.url.includes('/query/data/')) {if(apiError)throw new Error('offline');return {val:'JSESSIONID=FAKE_TEST_ONLY;'};}
       lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
@@ -715,11 +715,53 @@ function distributionFixture() {
     const instance = new Widget('');
     environment.Script.setWidget(await instance.render()); environment.Script.complete();
   }};
-  const environment = { UNICOM_FLOW_TEST:true, config:{runsInWidget:true,runsInApp:false,widgetFamily:'medium'},
+  const environment = { UNICOM_FLOW_TEST:true, Timer:{schedule:(ms,repeat,callback)=>setTimeout(callback,0)}, config:{runsInWidget:true,runsInApp:false,widgetFamily:'medium'},
     args:{widgetParameter:'',queryParameters:{}}, importModule:name=>{assert.equal(name,'DmYY');return dependency;},
     FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, WebView, Data:{fromPNG:()=>({toBase64String:()=> 'FAKE_PREVIEW'})}, module:{filename:'/documents/联通流量.js'},
     Font:Object.assign(class extends Font {},Font,{boldSystemFont:size=>({size})}), Device:{screenSize:()=>({width:390,height:844})},
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
+  // 四个独立脚本环境共用同一历史和短期请求锁，不重复查询联通。
+  let cacheNow=new Date(2026,10,5,10).getTime(), cacheQueries=0, cookieChecks=0, cacheFailure=false, cacheCookie='JSESSIONID=CACHE_ACCOUNT_A;';
+  class CacheDate extends Date {constructor(...args){super(...(args.length?args:[cacheNow]));}static now(){return cacheNow;}}
+  class CacheRequest {
+    constructor(url){this.url=url;}
+    async loadJSON(){cookieChecks++;return {val:cacheCookie};}
+    async loadString(){cacheQueries++;cacheNow++;if(cacheFailure)throw new Error('offline');return JSON.stringify(fixture());}
+  }
+  const sharedFiles=new Map();
+  const cacheStore={read:(key,fallback)=>sharedFiles.has(key)?JSON.parse(sharedFiles.get(key)):fallback,write:(key,value)=>sharedFiles.set(key,JSON.stringify(value)),remove:key=>sharedFiles.delete(key),clear:()=>sharedFiles.delete('history')};
+  const cacheApis=await Promise.all(Array.from({length:4},()=>load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest})));
+  const together=await Promise.all(cacheApis.map(api=>api.refresh(cacheStore)));
+  assert.equal(cacheQueries,1);assert.equal(cookieChecks,4);assert.equal(together.filter(r=>!r.fromCache).length,1);
+  assert.equal(sharedFiles.has('query-lock'),false);
+  const successAt=together[0].history.data.at, deadline=successAt+30*60000;
+  cacheNow=successAt+20*60000;
+  const twentyPast=await cacheApis[1].refresh(cacheStore);
+  assert.equal(twentyPast.fromCache,true);assert.equal(cacheQueries,1);assert.equal(twentyPast.history.data.at,successAt);
+  const cachedWidget=cacheApis[1].makeWidget(twentyPast,true);
+  assert.equal(cachedWidget.refreshAfterDate.getTime(),deadline); // 10:20读取仍建议10:30，不能变10:50
+  const beforeManual=cacheQueries;
+  const manual=await cacheApis[2].refresh(cacheStore,true);
+  assert.equal(cacheQueries,beforeManual+1);assert.equal(manual.fromCache,false);assert.ok(manual.history.data.at>successAt);
+  cacheNow=cacheApis[0].queryDeadline(manual.history);
+  await Promise.all(cacheApis.map(api=>api.refresh(cacheStore)));
+  assert.equal(cacheQueries,beforeManual+2); // 到期四组件只再查一次
+  const goodHistory=cacheStore.read('history');cacheFailure=true;
+  await assert.rejects(cacheApis[0].refresh(cacheStore,true),/暂时不可用/);
+  assert.equal(cacheStore.read('history').data.at,goodHistory.data.at);assert.equal(sharedFiles.has('query-lock'),false);
+  cacheFailure=false;cacheCookie='JSESSIONID=CACHE_ACCOUNT_B;';
+  const changedAccount=await cacheApis[0].refresh(cacheStore);
+  assert.notEqual(changedAccount.history.session,goodHistory.session);assert.equal(changedAccount.fromCache,false);
+  cacheStore.write('query-lock',{owner:'expired',expiresAt:cacheNow-1});
+  await cacheApis[0].refresh(cacheStore,true);assert.equal(sharedFiles.has('query-lock'),false);
+  cacheNow=new Date(2026,10,5,23,50).getTime();
+  const nearMidnight=await cacheApis[0].refresh(cacheStore,true);
+  assert.equal(cacheApis[0].queryDeadline(nearMidnight.history),new Date(2026,10,6).getTime());
+  const requestsBeforeMain=cacheQueries;let unwantedDmYY=0;
+  const directApi=await load.runInNewContext({...environment,Date:CacheDate,Request:CacheRequest,FileManager:class extends FileManager {static local(){return new this();}fileExists(path){return path.endsWith('/history.json')||super.fileExists(path);}readString(path){return path.endsWith('/history.json')?JSON.stringify(nearMidnight.history):super.readString(path);}},importModule:()=>({DmYY:MockDmYY,Runing:async()=>{unwantedDmYY++;}})});
+  await directApi.main();assert.equal(unwantedDmYY,0);assert.equal(cacheQueries,requestsBeforeMain);
+  assert.equal(widget.refreshAfterDate.getTime(),new Date(2026,10,6).getTime());
+  completed=0;
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
   // 与成功抓包相同的接口主机与表单体。
@@ -776,7 +818,13 @@ function distributionFixture() {
   assert.ok(menus.some(item=>item.title==='主副卡用量'));
   assert.ok(menus.some(item=>item.title==='用量统计'));
   assert.ok(!menus.some(item=>['本月用量','近12个月'].includes(item.title)));
-  const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics+2);
+  const immediate=menus.find(item=>item.name==='flowProxy');assert.equal(immediate.title,'立即刷新数据');
+  const beforeImmediate=requestCount;await immediate.onClick();assert.equal(requestCount,beforeImmediate+2);
+  assert.equal(alerts.at(-1).title,'刷新完成');
+  const successfulBeforeFailure=files.get('/documents/UnicomFlow/history.json');
+  apiError=true;await immediate.onClick();assert.equal(alerts.at(-1).title,'刷新未完成');
+  assert.equal(files.get('/documents/UnicomFlow/history.json'),successfulBeforeFailure);apiError=false;
+  const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics+1);
   assert.ok(feedback.at(-1).html.includes('tab-hours'));assert.ok(feedback.at(-1).html.includes('tab-year'));
   apiError=true;await instance.showUsageStatistics();assert.ok(feedback.at(-1).html.includes('缓存数据'));apiError=false;
 
@@ -953,5 +1001,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: 本月每日图/今日小时图/主副卡统一图例/移除刷新图标及链接/标题字号保存与恢复、默认单日今日/7日小时切换/12月每日切换/顶部汇总同步/日期边界/零与缺失/切换只读不持久化、month/today参数独立渲染及刷新保留模式/今日复用既有逐卡区间/删除冗余套餐字段/零区间不覆盖旧用量/归属不明确不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 四组件共享缓存及并发合并/共同查询截止时间/手动强制查询/失败不改成功时间/跨日与账号隔离/绕过DmYY覆盖刷新时间、本月每日图/今日小时图/主副卡统一图例/移除刷新图标及链接/标题字号保存与恢复、默认单日今日/7日小时切换/12月每日切换/顶部汇总同步/日期边界/零与缺失/切换只读不持久化、month/today参数独立渲染及刷新保留模式/今日复用既有逐卡区间/删除冗余套餐字段/零区间不覆盖旧用量/归属不明确不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

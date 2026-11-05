@@ -29,7 +29,7 @@ const UF = {
   endpoint: 'https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
   // 与成功 HAR 的实际表单一致；失败时仍可退回无表单请求。
   form: 'language=chinese',
-  refreshMinutes: 30, dataRequestMinutes: 30,
+  refreshMinutes: 30, dataRequestMinutes: 30, crossDayLimitMB: 10,
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
   usageFontSize: 25, totalFontSize: 11, titleFontSize: null,
@@ -152,9 +152,10 @@ function formatMB(value, mode = 'usage') {
   if (value === 0) return '0MB';
   const scale = value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
   const displayed = value / scale[0];
-  const digits = mode === 'daily' ? 1 : value < 1024 ? 2 : 1;
-  const minimum = mode === 'daily' ? 0.1 : 0.01;
-  const number = displayed > 0 && displayed < minimum ? '<' + minimum : displayed.toFixed(digits);
+  const digits = value < 1024 && value >= 10 ? 0 : 1;
+  const minimum = value < 1024 ? 0.1 : 0.01;
+  let number = displayed > 0 && displayed < minimum ? '<' + minimum : displayed.toFixed(digits);
+  if (value < 1024 && Number(number) >= 10) number = Number(number).toFixed(0);
   return `${mode === 'total' && !number.startsWith('<') ? String(Number(number)) : number}${scale[1]}`;
 }
 
@@ -175,7 +176,7 @@ function formatGB(value, quota = false) {
 function todayPackageUsage(history, ids, at) {
   if (!ids.length) return null;
   const events = (history.events || []).filter(event => Number.isFinite(event.from) && Number.isFinite(event.at)
-    && event.from < event.at && event.at <= at && dayKey(event.from) === dayKey(at) && dayKey(event.at) === dayKey(at)
+    && event.from < event.at && event.at <= at && eventDate(event) === dayKey(at)
     && Number.isFinite(event.mb) && event.mb >= 0);
   if (!events.length) return null;
   const sum = usageSummary(events);
@@ -468,6 +469,20 @@ function eventParts(event) {
 }
 
 // 月度仅保存按日聚合；小时图仍使用短期区间记录，不累积秒级明细。
+function smallCrossDayTime(event, limit = UF.crossDayLimitMB) {
+  if (!Number.isFinite(event.from) || !Number.isFinite(event.at) || event.from >= event.at
+    || !Number.isFinite(event.mb) || event.mb < 0 || limit <= 0 || event.mb > limit) return null;
+  const midnight = new Date(event.from); midnight.setHours(24, 0, 0, 0);
+  const end = midnight.getTime(), next = new Date(end); next.setDate(next.getDate() + 1);
+  if (event.at < end || event.at >= next.getTime()) return null;
+  return end - event.from > event.at - end ? end - 1 : event.at;
+}
+
+function eventDate(event) {
+  return Number.isFinite(event.assignedAt) ? dayKey(event.assignedAt)
+    : dayKey(event.from) === dayKey(event.at) ? dayKey(event.at) : null;
+}
+
 function updateMonths(previous, sample, prev, interval, note) {
   const months = JSON.parse(JSON.stringify(previous || {}));
   const now = new Date(sample.at);
@@ -490,9 +505,11 @@ function updateMonths(previous, sample, prev, interval, note) {
     if (!Number.isFinite(event.from) || !Number.isFinite(event.at) || event.from >= event.at || event.at > sample.at
       || !Number.isFinite(event.mb) || event.mb < 0) return;
     touch(event.from); touch(event.at);
-    if (dayKey(event.from) === dayKey(event.at)) {
-      const d = day(event.at); if (d) { d.mb += event.mb; d.intervals++;
-        for (const [key, value] of Object.entries(eventParts(event))) d[key] += value; }
+    if (eventDate(event)) {
+      const d = day(event.assignedAt == null ? event.at : event.assignedAt); if (d) { d.mb += event.mb; d.intervals++;
+        for (const [key, value] of Object.entries(eventParts(event))) d[key] += value;
+        if (event.assignedAt != null) d.notes.push(`跨日小流量近似归入（${new Date(event.from).toLocaleString('zh-CN', { hour12: false })} → ${new Date(event.at).toLocaleString('zh-CN', { hour12: false })}）`);
+      }
     } else {
       const month = months[dayKey(event.at).slice(0, 7)];
       if (month) month.crossDay.push({ from: event.from, at: event.at, mb: event.mb, ...eventParts(event) });
@@ -582,14 +599,14 @@ function hourlyReport(history, at = Date.now(), selectedDay = dayKey(at)) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(selectedDay) && Number.isFinite(parsed.getTime()) && dayKey(parsed) === selectedDay && selectedDay <= actualToday ? selectedDay : actualToday;
   const hour = date === actualToday ? new Date(at).getHours() : 23;
   const days = Array.from({ length: 24 }, (_, index) => {
-    const events = (history.events || []).filter(e => dayKey(e.from) === date && dayKey(e.at) === date && new Date(e.at).getHours() === index && e.at <= at);
+    const events = (history.events || []).filter(e => eventDate(e) === date && new Date(e.assignedAt == null ? e.at : e.assignedAt).getHours() === index && e.at <= at);
     const parts = events.reduce((sum, e) => { sum.mb += e.mb; for (const [key, value] of Object.entries(eventParts(e))) sum[key] += value; return sum; }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
     const known = events.length > 0 && index <= hour;
     return { key: `${date} ${String(index).padStart(2, '0')}:00`, day: String(index).padStart(2, '0'), future: index > hour,
       mb: known ? parts.mb : null, mainMB: known ? parts.mainMB : null, viceMB: known ? parts.viceMB : null, unknownMB: known ? parts.unknownMB : null,
       intervals: known ? events.length : 0, first: known ? Math.min(...events.map(e => e.from)) : null,
       last: known ? Math.max(...events.map(e => e.at)) : null,
-      notes: events.some(e => new Date(e.from).getHours() !== index) ? ['跨小时区间计入结束小时，未平均摊分'] : [] };
+      notes: [...(events.some(e => new Date(e.from).getHours() !== index) ? ['跨小时区间计入结束小时，未平均摊分'] : []), ...(events.some(e => e.assignedAt != null) ? ['跨日小流量近似归入'] : [])] };
   });
   const saved = history.months && history.months[date.slice(0, 7)];
   const crossDay = (saved && saved.crossDay || []).filter(e => dayKey(e.from) <= date && dayKey(e.at) >= date);
@@ -598,7 +615,7 @@ function hourlyReport(history, at = Date.now(), selectedDay = dayKey(at)) {
     crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
 }
 
-// 区间两端是实际成功采样时间；复用旧记录，不按小时或每日汇总推算请求。
+// 区间两端是实际成功采样时间；复用旧记录，不按小时或每日用量记录推算请求。
 function successfulQueryTimes(history, at) {
   const events = [...(history.events || []), ...Object.values(history.months || {}).flatMap(month => month.crossDay || [])];
   const endpoints = events.filter(event => Number.isFinite(event.from) && Number.isFinite(event.at)
@@ -625,7 +642,7 @@ function statisticsReports(history, at = Date.now()) {
   const earliest = new Date(at); earliest.setHours(0,0,0,0); earliest.setDate(earliest.getDate()-6);
   const dates = {};
   const available = [...new Set((history.events || []).filter(e => Number.isFinite(e.from) && Number.isFinite(e.at)
-    && e.from < e.at && e.at <= at && dayKey(e.from) === dayKey(e.at) && e.at >= earliest.getTime()).map(e => dayKey(e.at)))].sort();
+    && e.from < e.at && e.at <= at && eventDate(e) && e.at >= earliest.getTime()).map(e => eventDate(e)))].sort();
   if (available.length) for (const cursor = new Date(available[0] + 'T00:00:00'); dayKey(cursor) < hours.month; cursor.setDate(cursor.getDate()+1)) {
     const key = dayKey(cursor); dates[key] = hourlyReport(history, at, key);
   }
@@ -671,7 +688,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
     <section class="card"><div class="card-head"><h2>最近24小时</h2><span class="hint">成功查询</span></div><div class="refresh-summary"><div class="mini"><div class="mini-label">请求次数</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><p class="refresh-note">间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔包含上一条位于24小时外的记录（如有）。</p></section>
-    <section class="card table-card"><div class="card-head"><h2>请求时间</h2><span class="hint">最新在前</span></div><table class="refresh-table"><thead><tr><th>成功时间</th><th>距上次成功</th></tr></thead><tbody id="refresh-rows"></tbody></table><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无成功查询</div></section>
+    <section class="card table-card"><div class="card-head"><h2>请求时间</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><table class="refresh-table"><thead><tr><th>成功时间</th><th>距上次成功</th></tr></thead><tbody id="refresh-rows"></tbody></table><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无成功查询</div></section>
     <p class="refresh-note">只记录成功获取联通数据的时间，读取缓存及失败请求不计入。仅保存最近7天的时间戳，不保存接口原文；升级前的记录复用已有采样区间起止时间，缺失记录无法补齐。页面展示打开时的快照，切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
@@ -743,7 +760,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
       el('cross-description').textContent=key==='month'?'这部分已计入所选月份合计，无法准确拆到每天，因此未计入每日柱状图。':'这部分无法准确拆到小时，未计入所选日期小时合计。';
       el('cross-card').hidden=key==='year'||!report.crossDay.length;el('cross-summary').textContent='跨日未分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段';el('cross-events').replaceChildren();
       for(const interval of report.crossDay){const item=document.createElement('div');item.className='cross-event';item.textContent=clock(interval.from,true)+' → '+clock(interval.at,true)+'\\n合计 '+amount(interval.mb)+' · 主 '+amount(interval.mainMB)+' / 副 '+amount(interval.viceMB)+' / 未确认 '+amount(interval.unknownMB);el('cross-events').append(item);}
-      el('scope').textContent=key==='year'?'每根柱子表示一个月已记录的用量，不累计跨月总量。月均只对已结束且有记录的月份计算，不含本月与空白月份；部分记录月份会标注并计入已记录月均，不能当作完整账单月均。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'顶部为所选月份已记录用量，包含同日和可确认的同月跨日区间，与趋势图中对应月份的柱子一致。每日图不拆分跨日区间，因此每日柱子的合计可能低于所选月份顶部合计。';
+      el('scope').textContent=key==='year'?'每根柱子表示一个月已记录的用量，不累计跨月总量。月均只对已结束且有记录的月份计算，不含本月与空白月份；部分记录月份会标注并计入已记录月均，不能当作完整账单月均。':key==='hours'?'小时图按有效区间的结束小时归集；跨日小流量近似归入对应日期，前一天归入23时。长时间没有采样时，一根柱可能包含多个小时的用量。':'顶部为所选月份已记录用量，包含同日和可确认的同月跨日区间，与趋势图中对应月份的柱子一致。跨日小流量近似归入覆盖时间较长的一天，其余跨日用量单独保存，因此每日柱子的合计可能低于所选月份顶部合计。';
       el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
       select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
     }
@@ -751,6 +768,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     const duration=ms=>ms==null?'—':ms<60000?Math.max(1,Math.round(ms/1000))+'秒':(Math.round(ms/6000)/10)+'分钟';
     el('refresh-count').textContent=queryLog.count+'次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
     el('refresh-empty').hidden=queryLog.rows.length>0;
+    el('clear-refresh-records').onclick=()=>{location.href='unicomflow://clear-refresh-records';};
     for(const item of queryLog.rows){const row=document.createElement('tr'),time=document.createElement('td'),gap=document.createElement('td');time.textContent=clock(item.at,true);gap.textContent=duration(item.interval);row.append(time,gap);el('refresh-rows').append(row);}
     let showingRefresh=false, usageScroll=0;
     el('refresh-records-toggle').onclick=()=>{
@@ -789,8 +807,9 @@ function updateHistory(previous, sample) {
     }
     if (valid) {
       interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample) };
-      // 跨午夜的区间不能归为“今日”用量；不拆分或插值。
-      if (dayKey(prev.at) === dayKey(sample.at)) events.push(interval);
+      const assignedAt = smallCrossDayTime(interval);
+      if (assignedAt != null) interval.assignedAt = assignedAt;
+      if (eventDate(interval)) events.push(interval);
       note = '今日区间增量 · 按采样时刻';
     } else { events = []; note = '计数回退，重新积累'; }
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
@@ -805,8 +824,8 @@ function updateHistory(previous, sample) {
 function todayBuckets(history, at) {
   const buckets = Array.from({ length: 24 }, () => ({ mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0, samples: 0 }));
   for (const event of history.events || []) {
-    if (dayKey(event.at) !== dayKey(at) || dayKey(event.from) !== dayKey(at)) continue;
-    const bucket = buckets[new Date(event.at).getHours()];
+    if (eventDate(event) !== dayKey(at)) continue;
+    const bucket = buckets[new Date(event.assignedAt == null ? event.at : event.assignedAt).getHours()];
     bucket.mb += event.mb;
     for (const [key, value] of Object.entries(eventParts(event))) bucket[key] += value;
     bucket.samples++;
@@ -1261,6 +1280,8 @@ function createWidgetClass(DmYY) {
       UF.dataRequestMinutes = Number.isFinite(requestMinutes) && requestMinutes >= 5 && requestMinutes <= 1440
         ? requestMinutes : UF_DEFAULTS.dataRequestMinutes;
       this.settings.dataRequestMinutes = String(UF.dataRequestMinutes);
+      const crossLimit = Number(this.settings.crossDayLimitMB == null ? UF_DEFAULTS.crossDayLimitMB : this.settings.crossDayLimitMB);
+      UF.crossDayLimitMB = Number.isFinite(crossLimit) && crossLimit >= 0 && crossLimit <= 1024 ? crossLimit : UF_DEFAULTS.crossDayLimitMB;
       applyTheme(this.settings);
       UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
       for (const kind of ['usage', 'total']) {
@@ -1355,6 +1376,20 @@ function createWidgetClass(DmYY) {
       if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
       const view = new WebView();
       await view.loadHTML(statisticsHTML(statisticsReports(this.result.history), this.result.stale, 'hours', showRefresh));
+      let clearing = false;
+      const stale = this.result.stale;
+      view.shouldAllowRequest = request => {
+        if (request.url !== 'unicomflow://clear-refresh-records') return true;
+        if (!clearing) {
+          clearing = true;
+          this.clearHistoryPart('refresh').then(async cleared => {
+            if (!cleared) return;
+            const history = this.store.read('history', null);
+            if (history && history.data) await view.loadHTML(statisticsHTML(statisticsReports(history), stale, 'hours', true));
+          }).catch(error => alertMessage('清除未完成', error.message || '请重试')).finally(() => { clearing = false; });
+        }
+        return false;
+      };
       await view.present();
     }
 
@@ -1375,11 +1410,11 @@ function createWidgetClass(DmYY) {
 
     async clearHistoryPart(part, scope = null) {
       const descriptions = {
-        snapshot: ['最新套餐快照', '清除最新套餐数据及增量计算基线，下次查询重新建立基线；这段间隔的用量不再计算。保留已有短期采样、每日汇总及刷新记录。'],
+        snapshot: ['最新套餐快照', '清除最新套餐数据及增量计算基线，下次查询重新建立基线；这段间隔的用量不再计算。保留已有短期采样、每日用量记录及刷新记录。'],
         refresh: ['刷新记录', '仅清除成功查询时间和间隔统计，保留用量记录及最新套餐数据。旧采样时间不会重新出现在刷新记录中。'],
-        hours: ['短期采样明细', '清除最近7天采样区间，单日小时图及今日用量将从后续采样重新积累。保留刷新记录、每日汇总及最新套餐数据。'],
-        months: ['每日汇总', '清除近12个月每日汇总和跨日记录，单月及月度趋势从后续采样重新积累。保留短期采样、刷新记录及最新套餐数据。'],
-        all: ['全部历史', '清除最新套餐快照、小时明细、月度统计及刷新记录，下次查询重新建立基线。'],
+        hours: ['小时用量记录', '清除最近7天采样区间，单日小时图及今日用量将从后续采样重新积累。保留刷新记录、每日用量记录及最新套餐数据。'],
+        months: ['每日用量记录', '清除近12个月每日用量记录和跨日记录，单月及月度趋势从后续采样重新积累。保留小时用量记录、刷新记录及最新套餐数据。'],
+        all: ['全部历史', '清除最新套餐快照、小时用量记录、每日用量记录及刷新记录，下次查询重新建立基线。'],
       };
       if (!descriptions[part]) return;
       if (scope != null && !(part === 'hours' && /^\d{4}-\d{2}-\d{2}$/.test(scope)
@@ -1387,8 +1422,8 @@ function createWidgetClass(DmYY) {
       let [title, description] = descriptions[part];
       if (scope != null) {
         title = `${scope} 的${title}`;
-        description = part === 'hours' ? `仅清除 ${scope} 的采样区间，对应日期的小时图及今日用量将缺少这些明细。保留其他日期采样、每日汇总、刷新记录及套餐快照。`
-          : `仅清除 ${scope} 的每日汇总及该月保存的跨日记录。保留其他月份汇总、短期采样、刷新记录及套餐快照。若为当前月，后续采样仍会继续记录该月的新用量。`;
+        description = part === 'hours' ? `仅清除 ${scope} 的采样区间，对应日期的小时图及今日用量将缺少这些明细。保留其他日期采样、每日用量记录、刷新记录及套餐快照。`
+          : `仅清除 ${scope} 的每日用量记录及该月保存的跨日记录。保留其他月份汇总、小时用量记录、刷新记录及套餐快照。若为当前月，后续采样仍会继续记录该月的新用量。`;
       }
       const confirm = new Alert(); confirm.title = `清除${title}？`; confirm.message = description + '\nQX Cookie 和组件设置保留。';
       confirm.addDestructiveAction('清除'); confirm.addCancelAction('取消');
@@ -1400,7 +1435,7 @@ function createWidgetClass(DmYY) {
         history.queryTimes = successfulQueryTimes(history, Date.now());
         if (part === 'snapshot') { delete history.data; delete history.last; }
         if (part === 'refresh') { history.queryTimes = []; history.queryLogClearedAt = Date.now(); }
-        if (part === 'hours') history.events = scope == null ? [] : (history.events || []).filter(event => dayKey(event.at) !== scope);
+        if (part === 'hours') history.events = scope == null ? [] : (history.events || []).filter(event => eventDate(event) !== scope);
         if (part === 'months') {
           if (scope == null) history.months = {};
           else if (history.months) delete history.months[scope];
@@ -1409,67 +1444,28 @@ function createWidgetClass(DmYY) {
       }
       this.result = null;
       await alertMessage('清除完成', `已清除${title}。`);
+      return true;
     }
 
-    async showStoredDetails(part, page = 0, scope = null) {
+    async showStoredDetails(part) {
       if (!['hours', 'months'].includes(part)) return;
       const history = this.store.read('history', {}) || {};
-      const title = part === 'hours' ? '短期采样明细' : '每日汇总';
-      if (scope == null) {
-        const keys = part === 'hours' ? [...new Set((history.events || []).filter(event => Number.isFinite(event.at)).map(event => dayKey(event.at)))]
-          : Object.keys(history.months || {});
-        keys.sort().reverse();
-        const groups = keys.map(key => {
-          const saved = history.months && history.months[key];
-          const count = part === 'hours' ? (history.events || []).filter(event => dayKey(event.at) === key).length : Object.keys(saved.days || {}).length;
-          return { name: `storedGroup_${part}_${key}`, title: key,
-            desc: part === 'hours' ? `${count} 段采样 · 点击查看或删除此日` : `${count} 天汇总 · ${(saved.crossDay || []).length} 段跨日记录 · 点击查看或删除此月`,
-            type: 'input', icon: { name: 'calendar', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, 0, key) };
-        });
-        if (!groups.length) groups.push({ name: 'storedEmpty', title: '暂无记录', type: 'input', icon: { name: 'tray', color: '#8E8E93' }, onClick: () => {} });
-        return this.renderAppView([{ title: `${title} · 按${part === 'hours' ? '日期' : '月份'}查看`, menu: groups },
-          { title: '数据管理', menu: [{ name: 'storedClearAll', title: `清除全部${title}`, desc: '删除此类数据的所有日期，操作前再次确认',
-            type: 'input', icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part) }] }]);
-      }
-
-      const clock = at => Number.isFinite(at) ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '—';
-      const amount = mb => !Number.isFinite(mb) ? '—' : mb === 0 ? '0 MB'
-        : (mb >= 1024 ? (mb / 1024 < 0.01 ? '<0.01' : (mb / 1024).toFixed(2)) + ' GB'
-          : (mb < 0.01 ? '<0.01' : mb.toFixed(2)) + ' MB');
-      const records = part === 'hours' ? (history.events || []).filter(event => dayKey(event.at) === scope).map(event => ({
-        ...event, title: `${clock(event.from)} → ${clock(event.at)}`, interval: true,
-      })) : Object.entries(history.months || {}).filter(([month]) => month === scope).flatMap(([month, saved]) => [
-        ...Object.entries(saved.days || {}).map(([date, day]) => ({ ...day, title: date, at: day.last,
-          baseline: !day.intervals, month })),
-        ...(saved.crossDay || []).map(event => ({ ...event, title: `跨日 · ${clock(event.from)} → ${clock(event.at)}`,
-          interval: true, month })),
-      ]);
-      records.sort((a, b) => (b.at || 0) - (a.at || 0));
-      const pages = Math.max(1, Math.ceil(records.length / 50));
-      page = Math.min(Math.max(0, Math.floor(page) || 0), pages - 1);
-      const items = records.slice(page * 50, (page + 1) * 50).map((record, index) => {
-        const values = eventParts(record);
-        const usage = record.baseline ? '无有效增量' : `主卡 ${amount(values.mainMB)} · 副卡 ${amount(values.viceMB)} · 合计 ${amount(record.mb)}`;
-        const detail = `${usage}\n未确认归属：${record.baseline ? '—' : amount(values.unknownMB)}\n`
-          + (record.interval ? `开始：${clock(record.from)}\n结束：${clock(record.at)}`
-            : `有效区间：${record.intervals || 0} 段\n首末采样：${clock(record.first)} → ${clock(record.last)}`)
-          + (record.interval && part === 'months' ? '\n跨日用量单独保存，未分摊到各日。' : '')
-          + ((record.notes || []).length ? '\n说明：' + record.notes.join('；') : '');
-        return { name: `stored_${part}_${page}_${index}`, title: record.title, desc: usage, type: 'input',
-          icon: { name: record.interval ? 'clock' : 'calendar', color: '#007AFF' },
-          onClick: () => alertMessage(record.title, detail) };
+      const title = part === 'hours' ? '小时用量记录' : '每日用量记录';
+      const keys = part === 'hours' ? [...new Set((history.events || []).filter(event => Number.isFinite(event.at)).map(event => eventDate(event)).filter(Boolean))]
+        : Object.keys(history.months || {});
+      keys.sort().reverse();
+      const groups = keys.map(key => {
+        const saved = history.months && history.months[key];
+        const count = part === 'hours' ? (history.events || []).filter(event => eventDate(event) === key).length : Object.keys(saved.days || {}).length;
+        return { name: `storedGroup_${part}_${key}`, title: key,
+          desc: part === 'hours' ? `${count} 段采样 · 保留每日用量记录 · 点击删除此日采样`
+            : `${count} 天汇总 · ${(saved.crossDay || []).length} 段跨日记录 · 保留小时用量记录 · 点击删除此月汇总`,
+          type: 'input', icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part, key) };
       });
-      if (!items.length) items.push({ name: 'storedEmpty', title: '暂无记录', desc: '后续成功采样后逐步积累', type: 'input',
-        icon: { name: 'tray', color: '#8E8E93' }, onClick: () => {} });
-      const navigation = [];
-      if (page > 0) navigation.push({ name: 'storedPrevious', title: '上一页', type: 'input', icon: { name: 'chevron.left', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, page - 1, scope) });
-      if (page + 1 < pages) navigation.push({ name: 'storedNext', title: '下一页', type: 'input', icon: { name: 'chevron.right', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, page + 1, scope) });
-      return this.renderAppView([
-        { title: `${scope} · 共${records.length}条 · ${page + 1}/${pages}页`, menu: items },
-        ...(navigation.length ? [{ title: '翻页', menu: navigation }] : []),
-        { title: '数据管理', menu: [{ name: 'storedClear', title: `删除${scope}${part === 'hours' ? '的采样' : '的汇总'}`, desc: '仅删除当前分组，其他日期及数据类型保留', type: 'input',
-          icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part, scope) }] },
-      ]);
+      if (!groups.length) groups.push({ name: 'storedEmpty', title: '暂无记录', type: 'input', icon: { name: 'tray', color: '#8E8E93' }, onClick: () => {} });
+      return this.renderAppView([{ title: `${title} · 按${part === 'hours' ? '日期' : '月份'}删除（用量详情见用量统计）`, menu: groups },
+        { title: '整类清理', menu: [{ name: 'storedClearAll', title: `清除全部${title}`, desc: '删除此类数据的所有日期，操作前再次确认',
+          type: 'input', icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part) }] }]);
     }
 
     async clearHistory() {
@@ -1480,18 +1476,22 @@ function createWidgetClass(DmYY) {
       const choices = [
         ['snapshot', '最新套餐快照', `${history.data ? '1 份' : '暂无'} · 套餐显示及下次增量计算的基线`, 'doc.text'],
         ['refresh', '刷新记录', `${successfulQueryTimes(history, Date.now()).length} 条 · 最近7天的成功查询时间`, 'clock.arrow.circlepath'],
-        ['hours', '短期采样明细', `${(history.events || []).length} 段 · 最近7天，用于今日用量及小时图`, 'chart.bar.xaxis'],
-        ['months', '每日汇总', `${months.length} 个月 · ${months.reduce((n, month) => n + Object.keys(month.days || {}).length, 0)} 天 · 用于每日及月度统计`, 'calendar'],
+        ['hours', '小时用量记录', `${(history.events || []).length} 段 · 保留最近7天，用于单日统计及今日用量；按查询区间记录，非每小时一条`, 'chart.bar.xaxis'],
+        ['months', '每日用量记录', `${months.length} 个月 · ${months.reduce((n, month) => n + Object.keys(month.days || {}).length, 0)} 天 · 保留最近12个月，用于单月统计及月度趋势`, 'calendar'],
         ['all', '全部历史', '包含最新套餐快照及全部统计记录', 'trash'],
       ];
       return this.renderAppView([{ title: '存储概况', menu: [{ name: 'flowStorageSize', title: '数据文件总大小',
         defaultValue: size(usage.kb), desc: `${usage.files.length} 个文件 · 点击查看文件明细`, type: 'input', icon: { name: 'internaldrive', color: '#8E8E93' },
         onClick: () => alertMessage('数据文件明细', (usage.files.map(file => `${file.name}：${size(file.kb)}`).join('\n') || '暂无数据文件')
           + '\n\n统计范围为本脚本的数据目录，不含脚本代码、DmYY 设置和图片缓存。套餐分类设置及临时查询锁也计入文件大小；全部历史仅清除历史数据，保留分类设置。'),
-      }] }, { title: '历史数据', menu: choices.map(([part, title, desc, icon]) => ({
-        name: 'clearHistory_' + part, title, desc: desc + (['hours', 'months'].includes(part) ? ' · 点击查看明细' : ' · 点击清除'),
+      }] }, { title: '历史数据', menu: choices.filter(([part]) => !['snapshot', 'all'].includes(part)).map(([part, title, desc, icon]) => ({
+        name: 'clearHistory_' + part, title, desc: desc + (part === 'hours' ? ' · 按日期管理' : part === 'months' ? ' · 按月份管理' : ' · 点击清除'),
         type: 'input', icon: { name: icon, color: ['hours', 'months'].includes(part) ? '#007AFF' : '#FF3B30' },
         onClick: () => ['hours', 'months'].includes(part) ? this.showStoredDetails(part) : this.clearHistoryPart(part),
+      })) }, { title: '谨慎清理', menu: choices.filter(([part]) => ['snapshot', 'all'].includes(part)).map(([part, title, desc]) => ({
+        name: 'clearHistory_' + part, title: '清除' + title, desc, type: 'input',
+        icon: { name: part === 'snapshot' ? 'doc.badge.clock' : 'exclamationmark.triangle.fill', color: part === 'snapshot' ? '#FF9500' : '#FF3B30' },
+        onClick: () => this.clearHistoryPart(part),
       })) }]);
     }
 
@@ -1577,6 +1577,19 @@ function createWidgetClass(DmYY) {
           if (!this.result) return alertMessage('暂无明细', this.failure);
           await chooseCategory(this.store, this.result);
         }),
+        { name: 'crossDayLimitMB', val: 'crossDayLimitMB', title: '跨日小流量阈值', type: 'input',
+          defaultValue: String(this.settings.crossDayLimitMB == null ? UF_DEFAULTS.crossDayLimitMB : this.settings.crossDayLimitMB),
+          desc: '单位 MB；默认10，0关闭；仅影响后续采样，已有记录不重算', icon: { name: 'moon.stars', color: '#8A73FF' },
+          onClick: async (_, __, view) => {
+            const a = new Alert(); a.title = '跨日小流量阈值';
+            a.message = '输入0—1024 MB，支持小数，0关闭。仅跨一个午夜且不超过阈值的用量近似归入覆盖时长较长的日期，相同则归后一天。已有记录不重算，跨月仍重新建立基线。';
+            a.addTextField('10', String(this.settings.crossDayLimitMB == null ? UF_DEFAULTS.crossDayLimitMB : this.settings.crossDayLimitMB));
+            a.addAction('保存'); a.addCancelAction('取消'); if (await a.presentAlert() < 0) return;
+            const value = a.textFieldValue(0).trim(), limit = Number(value);
+            if (!value || !Number.isFinite(limit) || limit < 0 || limit > 1024) return alertMessage('未保存', '请输入0—1024之间的数字');
+            this.settings.crossDayLimitMB = String(limit); this.saveSettings(false); this.applySettings();
+            if (view && this.insertTextByElementId) await this.insertTextByElementId(view, 'crossDayLimitMB', String(limit));
+          } },
         action('flowStatus', '连接检查', 'network', '#007AFF', () => this.connectionStatus()),
         action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
       ] }]);

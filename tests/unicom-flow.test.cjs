@@ -141,10 +141,12 @@ function distributionFixture() {
   assert.equal(formatMB(515.27),'515.27MB');assert.equal(formatMB(9.87*1024),'9.9GB');
   assert.equal(formatMB(10.39),'10.39MB');assert.equal(formatMB(10.39*1024),'10.4GB');
   assert.equal(formatMB(10.01),'10.01MB');assert.equal(formatMB(10),'10.00MB');
+  assert.equal(formatMB(0.1,'daily'),'0.1MB');assert.equal(formatMB(0.53,'daily'),'0.5MB');
+  assert.equal(formatMB(0.09,'daily'),'0.09MB');assert.equal(formatMB(0.001,'daily'),'<0.01MB');
   assert.equal(formatMB(0),'0MB');assert.equal(formatMB(0,'daily'),'0MB');
   assert.equal(formatMB(0.03),'0.03MB');assert.equal(formatMB(0.03,'daily'),'0.03MB');
-  assert.equal(formatMB(954.53),'954.53MB');assert.equal(formatMB(954.53,'daily'),'954.53MB');
-  assert.equal(formatMB(1.23*1024,'daily'),'1.23GB');assert.equal(formatMB(10.39*1024,'daily'),'10.39GB');
+  assert.equal(formatMB(954.53),'954.53MB');assert.equal(formatMB(954.53,'daily'),'954.5MB');
+  assert.equal(formatMB(1.23*1024,'daily'),'1.2GB');assert.equal(formatMB(10.39*1024,'daily'),'10.4GB');
   assert.equal(formatMB(120*1024,'total'),'120GB');assert.equal(formatMB(500,'total'),'500MB');
   assert.equal(formatMB(80.5*1024,'total'),'80.5GB');assert.equal(formatMB(0.03,'total'),'0.03MB');
   assert.equal(megabytes('1,024 MB'), 1024);
@@ -574,10 +576,10 @@ function distributionFixture() {
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
-    assert.ok(todayImage.includes('>30.00</text>'));assert.ok(todayImage.includes('>50.00</text>'));
+    assert.ok(todayImage.includes('>30.0</text>'));assert.ok(todayImage.includes('>50.0</text>'));
     assert.ok(todayImage.includes('>0.22/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
     assert.ok(!/>[^<]*%[^<]*<\/text>/.test(todayImage));assert.ok(!todayImage.includes('本月'));
-    assert.ok(todayImage.includes('今日已记录'));assert.ok(!todayImage.includes('主 60.00MB'));
+    assert.ok(todayImage.includes('今日已记录'));assert.ok(!todayImage.includes('主 60.0MB'));
     if(medium) {assert.ok(todayImage.includes('>主卡</text>'));assert.ok(todayImage.includes('>副卡</text>'));assert.ok(todayImage.includes('小时用量'));}
     const missingImage=noonVisual.renderImage({history:{...reusableAtNoon,events:[]},stale:false},medium,medium?338:158,158,'today');
     assert.ok(missingImage.includes('>—</text>'));assert.ok(!missingImage.includes('>0</text>'));assert.ok(missingImage.includes('今日待采样'));
@@ -590,8 +592,8 @@ function distributionFixture() {
   const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
   const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="(?:84.5|94.5)" text-anchor="start"[^>]*>[主副] [^<]+<\/text>/g)];
   assert.equal(unevenLegends.length,2);assert.equal(unevenLegends[0][1],unevenLegends[1][1]);
-  assert.ok(unevenWidget.includes('>主 6.00MB</text>'));assert.ok(unevenWidget.includes('>副 1.00GB</text>'));
-  assert.ok(stackedWidget.includes('>主 60.00MB</text>'));assert.ok(stackedWidget.includes('>副 30.00MB</text>'));
+  assert.ok(unevenWidget.includes('>主 6.0MB</text>'));assert.ok(unevenWidget.includes('>副 1.0GB</text>'));
+  assert.ok(stackedWidget.includes('>主 60.0MB</text>'));assert.ok(stackedWidget.includes('>副 30.0MB</text>'));
   const hour10x=13+(10+0.5)*13-4.25;
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29*60/90}" width="8.5" height="${29*60/90}" fill="#0A94FF"`));
   assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29}" width="8.5" height="${29*30/90}" fill="#8A73FF"`));

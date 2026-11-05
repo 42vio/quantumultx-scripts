@@ -32,7 +32,7 @@ const UF = {
   refreshMinutes: 30,
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
-  usageFontSize: 25, totalFontSize: 11,
+  usageFontSize: 25, totalFontSize: 11, titleFontSize: null,
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
@@ -57,6 +57,11 @@ function normalizedFontSize(value, kind) {
   const [min, max] = kind === 'usage' ? [12, 28] : [6, 14];
   return String(value == null ? '' : value).trim() && Number.isFinite(n) && n >= min && n <= max
     ? n : UF_DEFAULTS[kind + 'FontSize'];
+}
+
+function normalizedTitleSize(value) {
+  const n = Number(value);
+  return String(value == null ? '' : value).trim() && Number.isFinite(n) && n >= 8 && n <= 12 ? n : null;
 }
 
 const UF_THEMES = {
@@ -865,7 +870,10 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
 
 function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dailyUsed = null) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, today ? title + ' · 今日' : title, x, y, width, 14, compact ? 10 : 11, UF.text, false, false, true);
+  const heading = today ? title + ' · 今日' : title;
+  const headingWidth = [...heading].reduce((sum,ch) => sum + (/[\u3400-\u9fff]/.test(ch) ? 1 : 0.6),0);
+  const headingSize = Math.min(UF.titleFontSize == null ? compact ? 10 : 11 : UF.titleFontSize, width / Math.max(1,headingWidth));
+  text(ctx, heading, x, y, width, 16, headingSize, UF.text, false, false, true);
   const primary = formatMB(today ? dailyUsed : metric && metric.used, today ? 'daily' : 'usage');
   const textX = x + 10, textWidth = width - 10;
   // 等宽字体的普通空格过宽，数字与单位分开绘制，同字号并只留 2 点间距。
@@ -944,22 +952,26 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const metrics = displayMetrics(data);
   const today = widgetMode(mode) === 'today';
   const daily = today ? [todayPackageUsage(result.history, metrics.leftIds, Date.now()), todayPackageUsage(result.history, metrics.rightIds, Date.now())] : [];
-  const buckets = medium ? todayBuckets(result.history, Date.now()) : [];
+  const now = Date.now();
+  const buckets = !medium ? [] : today ? todayBuckets(result.history, now)
+    : monthlyReport(result.history, now).days.map(day => ({ mb: day.mb || 0, ...eventParts({ ...day, mb: day.mb || 0 }), samples: day.intervals }));
   if (medium) {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false, today, daily[0]);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false, today, daily[1]);
     const chartX = pad, chartY = 99, chartW = width - 2 * pad, chartH = height - chartY - 30;
-    const cell = chartW / 24, max = Math.max(1, ...buckets.map(b => b.mb));
-    const currentHour = new Date(Date.now()).getHours(), minimumBar = 1.5;
-    text(ctx, today ? '小时用量' : '今日用量',
+    const currentSlot = today ? new Date(now).getHours() : new Date(now).getDate() - 1;
+    const cell = chartW / buckets.length, max = Math.max(1, ...buckets.slice(0,currentSlot+1).map(b => b.mb));
+    const markers = today ? [0, 6, 12, 18, 23] : [0, 4, 9, 14, 19, 24, buckets.length - 1];
+    const minimumBar = 1.5;
+    text(ctx, today ? '小时用量' : '每日用量',
       chartX, 84, chartW - 80, 12, 8, UF.muted);
-    buckets.forEach((bucket, hour) => {
-      const center = chartX + (hour + 0.5) * cell;
+    buckets.forEach((bucket, slot) => {
+      const center = chartX + (slot + 0.5) * cell;
       const barWidth = Math.max(1, cell - 4.5);
-      ctx.setFillColor(new Color(hour % 6 === 0 ? UF.gridMajor : UF.gridMinor));
+      ctx.setFillColor(new Color(markers.includes(slot) ? UF.gridMajor : UF.gridMinor));
       ctx.fillRect(new Rect(center - 0.25, chartY, 0.5, chartH));
-      if (hour > currentHour) return;
+      if (slot > currentSlot) return;
       if (bucket.mb > 0) {
         const h = Math.max(minimumBar, bucket.mb / max * chartH);
         let bottom = chartY + chartH;
@@ -969,13 +981,13 @@ function renderImage(result, medium, width, height, mode = 'month') {
           bottom -= height; ctx.setFillColor(new Color(color));
           ctx.fillRect(new Rect(center - barWidth / 2, bottom, barWidth, height));
         }
-      } else if (bucket.samples || hour < currentHour) {
+      } else if (bucket.samples || slot < currentSlot) {
         // 灰色是缺少采样的占位，不计入用量；紫色短柱表示真实零增量。
         ctx.setFillColor(new Color(bucket.samples ? UF.purple : UF.track));
         ctx.fillRect(new Rect(center - barWidth / 2, chartY + chartH - minimumBar, barWidth, minimumBar));
       }
     });
-    [0, 6, 12, 18, 23].forEach(h => text(ctx, String(h).padStart(2, '0'), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
+    markers.forEach(h => text(ctx, today ? String(h).padStart(2, '0') : String(h + 1), chartX + (h + 0.5) * cell - 9, chartY + chartH + 2, 18, 10, 7, UF.muted, true, true));
   } else {
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, width - 2 * pad, true, today, daily[0]);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad, 84, width - 2 * pad, true, today, daily[1]);
@@ -983,7 +995,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const date = new Date(data.at);
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
   const incomplete = [metrics.left, metrics.right].some(metric => metric && metric.composition && !metric.composition.complete);
-  const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 点击右上角重试`
+  const status = result.stale ? `缓存 ${dayKey(data.at).slice(5)} · 查询未成功`
     : incomplete ? '逐卡明细未补全 · 暂不分色' : data.warnings.length || metrics.omitted ? '另有明细 · 点击查看' : '';
   const compactStatus = result.stale ? `缓存 ${dayKey(data.at).slice(5)}`
     : incomplete ? '逐卡明细不全' : status ? '另有明细' : '';
@@ -993,26 +1005,17 @@ function renderImage(result, medium, width, height, mode = 'month') {
   text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : todayBuckets(result.history, Date.now()).some(b => b.samples) ? '今日分类未确认' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = 78;
-    const sampled = buckets.some(b => b.samples);
-    const unknown = buckets.reduce((sum, b) => sum + b.unknownMB, 0);
-    const legends = [[UF.blue, '主', 'mainMB'], [UF.purple, '副', 'viceMB']].map(([color, name, key]) => {
-      const used = buckets.reduce((sum, b) => sum + b[key], 0);
-      // 仅显示可确认归属的已记录用量；无采样或仅有未知归属时不伪装成零。
-      const value = !sampled ? '待采样' : used === 0 && unknown > 0 ? '未确认' : formatMB(used, 'daily');
-      return { color, caption: today ? name + '卡' : name + ' ' + value };
-    });
+    const legendY = 82;
+    const legends = [{ color: UF.blue, caption: '主卡' }, { color: UF.purple, caption: '副卡' }];
     // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
     const captionWidth = Math.min(65, Math.ceil(Math.max(...legends.map(({ caption }) =>
       Array.from(caption).reduce((sum, c) => sum + 6.5 * (c.charCodeAt(0) > 255 ? 1 : c === ' ' ? 0.3 : 0.6), 0)))) + 2);
     const legendX = width - pad - captionWidth - 5;
     legends.forEach(({ color, caption }, index) => {
-      const y = legendY + index * 10;
+      const y = legendY + index * 7.5;
       roundedRect(ctx, legendX, y + 3, 2.5, 2.5, 1.25, color);
       text(ctx, caption, legendX + 5, y, captionWidth, 9, 6.5, UF.muted);
     });
-    // 使用文字颜色绘制图标，点击区域另由透明布局提供。
-    text(ctx, '↻', width - 32, 13, 14, 16, 13, UF.muted);
   }
   return ctx.getImage();
 }
@@ -1026,10 +1029,6 @@ function widgetSize(medium) {
   return { width: medium ? closest[2] : closest[1], height: closest[1] };
 }
 
-function refreshURL(medium, mode = 'month') {
-  return 'scriptable:///run?scriptName=' + encodeURIComponent(Script.name()) + '&ufRefresh=1&ufFamily=' + (medium ? 'medium' : 'small') + '&ufMode=' + widgetMode(mode);
-}
-
 function makeWidget(result, medium, mode = 'month') {
   const widget = new ListWidget();
   widget.backgroundColor = new Color(UF.bg);
@@ -1038,20 +1037,6 @@ function makeWidget(result, medium, mode = 'month') {
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
-  if (medium) {
-    // 仅右上角 44×44 区域刷新，其他位置不设链接，遵循用户的小组件点击设置。
-    const row = widget.addStack(); row.layoutHorizontally(); row.spacing = 0;
-    row.size = new Size(size.width, size.height);
-    const content = row.addStack(); content.size = new Size(size.width - 44, size.height);
-    content.addSpacer();
-    const right = row.addStack(); right.layoutVertically(); right.spacing = 0;
-    right.size = new Size(44, size.height);
-    for (const [height, url] of [[44, refreshURL(true, mode)], [size.height - 44, null]]) {
-      const area = right.addStack(); area.size = new Size(44, height);
-      if (url) area.url = url;
-      area.setPadding(0, 0, 0, 0); area.addSpacer();
-    }
-  }
 
   return widget;
 }
@@ -1156,6 +1141,7 @@ function createWidgetClass(DmYY) {
       UF.refreshMinutes = Number.isFinite(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : UF_DEFAULTS.refreshMinutes;
       this.settings.refreshAfterDate = String(UF.refreshMinutes);
       applyTheme(this.settings);
+      UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
       for (const kind of ['usage', 'total']) {
         UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
         UF[kind + 'FontSize'] = normalizedFontSize(this.settings[kind + 'FontSize'], kind);
@@ -1289,7 +1275,7 @@ function createWidgetClass(DmYY) {
 
     async fontSettings() {
       const groups = [['usage', '用量文字', 12, 28], ['total', '总量与百分比', 6, 14]];
-      return this.renderAppView(groups.map(([kind, title, min, max]) => ({ title, menu: [
+      const sections = groups.map(([kind, title, min, max]) => ({ title, menu: [
         { name: kind + 'Font', val: kind + 'Font', title: '字体', type: 'select',
           options: Object.keys(UF_NUMBER_FONTS), defaultValue: this.settings[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },
         { name: kind + 'FontSize', val: kind + 'FontSize', title: '文字大小', type: 'input',
@@ -1308,7 +1294,21 @@ function createWidgetClass(DmYY) {
             this.settings[key] = String(size); this.saveSettings(false);
             if (view && this.insertTextByElementId) this.insertTextByElementId(view, key, String(size));
           } },
-      ] })));
+      ] }));
+      sections.push({ title: '标题文字', menu: [{ name: 'titleFontSize', val: 'titleFontSize', title: '文字大小', type: 'input',
+        defaultValue: normalizedTitleSize(this.settings.titleFontSize) == null ? '随尺寸' : String(normalizedTitleSize(this.settings.titleFontSize)),
+        desc: '小号、中号共用；8—12，支持小数；留空恢复小号10、中号11', icon: { name: 'textformat.size', color: '#007AFF' },
+        onClick: async (_, __, view) => {
+          const a = new Alert(); a.title = '标题文字大小'; a.message = '输入 8—12 之间的字号，小号、中号共用；留空恢复默认（小号10、中号11）。长标题自动缩小以适应宽度。';
+          a.addTextField('留空恢复默认', normalizedTitleSize(this.settings.titleFontSize) == null ? '' : String(normalizedTitleSize(this.settings.titleFontSize)));
+          a.addAction('保存'); a.addCancelAction('取消'); if (await a.presentAlert() < 0) return;
+          const value = a.textFieldValue(0).trim(), size = normalizedTitleSize(value);
+          if (value && size == null) return alertMessage('未保存', '请输入 8—12 之间的数字，或留空恢复默认');
+          if (value) this.settings.titleFontSize = String(size); else delete this.settings.titleFontSize;
+          this.saveSettings(false);
+          if (view && this.insertTextByElementId) this.insertTextByElementId(view, 'titleFontSize', value ? String(size) : '随尺寸');
+        } }] });
+      return this.renderAppView(sections);
     }
 
     async colorSettings() {

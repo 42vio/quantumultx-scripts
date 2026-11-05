@@ -605,7 +605,8 @@ function successfulQueryTimes(history, at) {
     && event.from < event.at && event.at <= at).flatMap(event => [event.from, event.at]);
   return [...new Set([...(history.queryTimes || []), ...endpoints,
     history.last && history.last.at, history.data && history.data.at])]
-    .filter(time => Number.isFinite(time) && time <= at && time >= at - 7 * 86400000).sort((a, b) => a - b);
+    .filter(time => Number.isFinite(time) && time <= at && time >= at - 7 * 86400000
+      && (!Number.isFinite(history.queryLogClearedAt) || time > history.queryLogClearedAt)).sort((a, b) => a - b);
 }
 
 function refreshRecords(history, at = Date.now()) {
@@ -795,6 +796,7 @@ function updateHistory(previous, sample) {
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
   const months = updateMonths(old.months, sample, prev, interval, note);
   return { version: 1, cardHistoryVersion: 1, session: sample.session, events, months, note,
+    ...(Number.isFinite(old.queryLogClearedAt) ? { queryLogClearedAt: old.queryLogClearedAt } : {}),
     queryTimes: [...new Set([...successfulQueryTimes(old, sample.at), sample.at])]
       .filter(time => Number.isFinite(time) && time <= sample.at && time >= sample.at - 7 * 86400000).sort((a, b) => a - b),
     last: { at: sample.at, signature, packages: sample.packages, members: (sample.members || []).map(m => ({ id: m.id, role: m.role, roleConflict: m.roleConflict })) }, data: sample };
@@ -825,6 +827,18 @@ function storage() {
     },
     write(name, value) { fm.writeString(fm.joinPath(dir, name + '.json'), JSON.stringify(value)); },
     remove(name) { const path = fm.joinPath(dir, name + '.json'); if (fm.fileExists(path)) fm.remove(path); },
+    usage() {
+      const files = [];
+      const visit = (path, prefix = '') => {
+        for (const name of fm.listContents(path)) {
+          const file = fm.joinPath(path, name), label = prefix + name;
+          if (fm.isDirectory(file)) visit(file, label + '/');
+          else files.push({ name: label, kb: fm.fileSize(file) });
+        }
+      };
+      visit(dir);
+      return { files, kb: files.every(file => Number.isFinite(file.kb)) ? files.reduce((sum, file) => sum + file.kb, 0) : null };
+    },
     clear() { this.remove('history'); },
   };
 }
@@ -1359,10 +1373,126 @@ function createWidgetClass(DmYY) {
       await alertMessage('连接检查', this.failure || `QX Cookie：已读取\n套餐接口：成功\n识别流量包：${this.result.history.data.packages.length}\n${this.result.history.data.warnings.join('\n')}\n\nCookie 未写入文件或日志。`);
     }
 
-    async clearHistory() {
-      const confirm = new Alert(); confirm.title = '清除历史？'; confirm.message = '清除本组件的快照、小时图及近12个月日记录；QX Cookie 保留。';
+    async clearHistoryPart(part, scope = null) {
+      const descriptions = {
+        snapshot: ['最新套餐快照', '清除最新套餐数据及增量计算基线，下次查询重新建立基线；这段间隔的用量不再计算。保留已有短期采样、每日汇总及刷新记录。'],
+        refresh: ['刷新记录', '仅清除成功查询时间和间隔统计，保留用量记录及最新套餐数据。旧采样时间不会重新出现在刷新记录中。'],
+        hours: ['短期采样明细', '清除最近7天采样区间，单日小时图及今日用量将从后续采样重新积累。保留刷新记录、每日汇总及最新套餐数据。'],
+        months: ['每日汇总', '清除近12个月每日汇总和跨日记录，单月及月度趋势从后续采样重新积累。保留短期采样、刷新记录及最新套餐数据。'],
+        all: ['全部历史', '清除最新套餐快照、小时明细、月度统计及刷新记录，下次查询重新建立基线。'],
+      };
+      if (!descriptions[part]) return;
+      if (scope != null && !(part === 'hours' && /^\d{4}-\d{2}-\d{2}$/.test(scope)
+        || part === 'months' && /^\d{4}-\d{2}$/.test(scope))) return;
+      let [title, description] = descriptions[part];
+      if (scope != null) {
+        title = `${scope} 的${title}`;
+        description = part === 'hours' ? `仅清除 ${scope} 的采样区间，对应日期的小时图及今日用量将缺少这些明细。保留其他日期采样、每日汇总、刷新记录及套餐快照。`
+          : `仅清除 ${scope} 的每日汇总及该月保存的跨日记录。保留其他月份汇总、短期采样、刷新记录及套餐快照。若为当前月，后续采样仍会继续记录该月的新用量。`;
+      }
+      const confirm = new Alert(); confirm.title = `清除${title}？`; confirm.message = description + '\nQX Cookie 和组件设置保留。';
       confirm.addDestructiveAction('清除'); confirm.addCancelAction('取消');
-      if (await confirm.presentAlert() === 0) { this.store.clear(); this.result = null; }
+      if (await confirm.presentAlert() !== 0) return;
+      const history = this.store.read('history', null);
+      if (part === 'all') this.store.clear();
+      else if (history) {
+        // 删除小时明细前保留可恢复的查询时间，两个功能可独立清理。
+        history.queryTimes = successfulQueryTimes(history, Date.now());
+        if (part === 'snapshot') { delete history.data; delete history.last; }
+        if (part === 'refresh') { history.queryTimes = []; history.queryLogClearedAt = Date.now(); }
+        if (part === 'hours') history.events = scope == null ? [] : (history.events || []).filter(event => dayKey(event.at) !== scope);
+        if (part === 'months') {
+          if (scope == null) history.months = {};
+          else if (history.months) delete history.months[scope];
+        }
+        this.store.write('history', history);
+      }
+      this.result = null;
+      await alertMessage('清除完成', `已清除${title}。`);
+    }
+
+    async showStoredDetails(part, page = 0, scope = null) {
+      if (!['hours', 'months'].includes(part)) return;
+      const history = this.store.read('history', {}) || {};
+      const title = part === 'hours' ? '短期采样明细' : '每日汇总';
+      if (scope == null) {
+        const keys = part === 'hours' ? [...new Set((history.events || []).filter(event => Number.isFinite(event.at)).map(event => dayKey(event.at)))]
+          : Object.keys(history.months || {});
+        keys.sort().reverse();
+        const groups = keys.map(key => {
+          const saved = history.months && history.months[key];
+          const count = part === 'hours' ? (history.events || []).filter(event => dayKey(event.at) === key).length : Object.keys(saved.days || {}).length;
+          return { name: `storedGroup_${part}_${key}`, title: key,
+            desc: part === 'hours' ? `${count} 段采样 · 点击查看或删除此日` : `${count} 天汇总 · ${(saved.crossDay || []).length} 段跨日记录 · 点击查看或删除此月`,
+            type: 'input', icon: { name: 'calendar', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, 0, key) };
+        });
+        if (!groups.length) groups.push({ name: 'storedEmpty', title: '暂无记录', type: 'input', icon: { name: 'tray', color: '#8E8E93' }, onClick: () => {} });
+        return this.renderAppView([{ title: `${title} · 按${part === 'hours' ? '日期' : '月份'}查看`, menu: groups },
+          { title: '数据管理', menu: [{ name: 'storedClearAll', title: `清除全部${title}`, desc: '删除此类数据的所有日期，操作前再次确认',
+            type: 'input', icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part) }] }]);
+      }
+
+      const clock = at => Number.isFinite(at) ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '—';
+      const amount = mb => !Number.isFinite(mb) ? '—' : mb === 0 ? '0 MB'
+        : (mb >= 1024 ? (mb / 1024 < 0.01 ? '<0.01' : (mb / 1024).toFixed(2)) + ' GB'
+          : (mb < 0.01 ? '<0.01' : mb.toFixed(2)) + ' MB');
+      const records = part === 'hours' ? (history.events || []).filter(event => dayKey(event.at) === scope).map(event => ({
+        ...event, title: `${clock(event.from)} → ${clock(event.at)}`, interval: true,
+      })) : Object.entries(history.months || {}).filter(([month]) => month === scope).flatMap(([month, saved]) => [
+        ...Object.entries(saved.days || {}).map(([date, day]) => ({ ...day, title: date, at: day.last,
+          baseline: !day.intervals, month })),
+        ...(saved.crossDay || []).map(event => ({ ...event, title: `跨日 · ${clock(event.from)} → ${clock(event.at)}`,
+          interval: true, month })),
+      ]);
+      records.sort((a, b) => (b.at || 0) - (a.at || 0));
+      const pages = Math.max(1, Math.ceil(records.length / 50));
+      page = Math.min(Math.max(0, Math.floor(page) || 0), pages - 1);
+      const items = records.slice(page * 50, (page + 1) * 50).map((record, index) => {
+        const values = eventParts(record);
+        const usage = record.baseline ? '无有效增量' : `主卡 ${amount(values.mainMB)} · 副卡 ${amount(values.viceMB)} · 合计 ${amount(record.mb)}`;
+        const detail = `${usage}\n未确认归属：${record.baseline ? '—' : amount(values.unknownMB)}\n`
+          + (record.interval ? `开始：${clock(record.from)}\n结束：${clock(record.at)}`
+            : `有效区间：${record.intervals || 0} 段\n首末采样：${clock(record.first)} → ${clock(record.last)}`)
+          + (record.interval && part === 'months' ? '\n跨日用量单独保存，未分摊到各日。' : '')
+          + ((record.notes || []).length ? '\n说明：' + record.notes.join('；') : '');
+        return { name: `stored_${part}_${page}_${index}`, title: record.title, desc: usage, type: 'input',
+          icon: { name: record.interval ? 'clock' : 'calendar', color: '#007AFF' },
+          onClick: () => alertMessage(record.title, detail) };
+      });
+      if (!items.length) items.push({ name: 'storedEmpty', title: '暂无记录', desc: '后续成功采样后逐步积累', type: 'input',
+        icon: { name: 'tray', color: '#8E8E93' }, onClick: () => {} });
+      const navigation = [];
+      if (page > 0) navigation.push({ name: 'storedPrevious', title: '上一页', type: 'input', icon: { name: 'chevron.left', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, page - 1, scope) });
+      if (page + 1 < pages) navigation.push({ name: 'storedNext', title: '下一页', type: 'input', icon: { name: 'chevron.right', color: '#007AFF' }, onClick: () => this.showStoredDetails(part, page + 1, scope) });
+      return this.renderAppView([
+        { title: `${scope} · 共${records.length}条 · ${page + 1}/${pages}页`, menu: items },
+        ...(navigation.length ? [{ title: '翻页', menu: navigation }] : []),
+        { title: '数据管理', menu: [{ name: 'storedClear', title: `删除${scope}${part === 'hours' ? '的采样' : '的汇总'}`, desc: '仅删除当前分组，其他日期及数据类型保留', type: 'input',
+          icon: { name: 'trash', color: '#FF3B30' }, onClick: () => this.clearHistoryPart(part, scope) }] },
+      ]);
+    }
+
+    async clearHistory() {
+      const history = this.store.read('history', {}) || {};
+      const months = Object.values(history.months || {});
+      const usage = this.store.usage();
+      const size = kb => !Number.isFinite(kb) ? '无法读取' : kb >= 1024 ? (kb / 1024).toFixed(2) + ' MB' : kb.toFixed(2) + ' KB';
+      const choices = [
+        ['snapshot', '最新套餐快照', `${history.data ? '1 份' : '暂无'} · 套餐显示及下次增量计算的基线`, 'doc.text'],
+        ['refresh', '刷新记录', `${successfulQueryTimes(history, Date.now()).length} 条 · 最近7天的成功查询时间`, 'clock.arrow.circlepath'],
+        ['hours', '短期采样明细', `${(history.events || []).length} 段 · 最近7天，用于今日用量及小时图`, 'chart.bar.xaxis'],
+        ['months', '每日汇总', `${months.length} 个月 · ${months.reduce((n, month) => n + Object.keys(month.days || {}).length, 0)} 天 · 用于每日及月度统计`, 'calendar'],
+        ['all', '全部历史', '包含最新套餐快照及全部统计记录', 'trash'],
+      ];
+      return this.renderAppView([{ title: '存储概况', menu: [{ name: 'flowStorageSize', title: '数据文件总大小',
+        defaultValue: size(usage.kb), desc: `${usage.files.length} 个文件 · 点击查看文件明细`, type: 'input', icon: { name: 'internaldrive', color: '#8E8E93' },
+        onClick: () => alertMessage('数据文件明细', (usage.files.map(file => `${file.name}：${size(file.kb)}`).join('\n') || '暂无数据文件')
+          + '\n\n统计范围为本脚本的数据目录，不含脚本代码、DmYY 设置和图片缓存。套餐分类设置及临时查询锁也计入文件大小；全部历史仅清除历史数据，保留分类设置。'),
+      }] }, { title: '历史数据', menu: choices.map(([part, title, desc, icon]) => ({
+        name: 'clearHistory_' + part, title, desc: desc + (['hours', 'months'].includes(part) ? ' · 点击查看明细' : ' · 点击清除'),
+        type: 'input', icon: { name: icon, color: ['hours', 'months'].includes(part) ? '#007AFF' : '#FF3B30' },
+        onClick: () => ['hours', 'months'].includes(part) ? this.showStoredDetails(part) : this.clearHistoryPart(part),
+      })) }]);
     }
 
     async refreshSettings() {
@@ -1371,14 +1501,15 @@ function createWidgetClass(DmYY) {
           ['refreshAfterDate', '组件刷新间隔', '默认30分钟；建议组件重新运行的间隔，实际由 iOS 调度。缓存更早到期时提前请求运行。', 'clock'],
           ['dataRequestMinutes', '数据请求间隔', '默认30分钟；所有组件共用，成功查询后在此间隔内使用缓存；立即刷新数据不受限制。', 'arrow.triangle.2.circlepath'],
         ].map(([key, title, desc, icon]) => ({ name: key, val: key, title, desc,
-          type: 'input', placeholder: '30', icon: { name: icon, color: '#34C759' },
-          onClick: async () => {
+          type: 'input', placeholder: '30', defaultValue: String(this.settings[key] || '30'), icon: { name: icon, color: '#34C759' },
+          onClick: async (_, __, view) => {
             const a = new Alert(); a.title = title; a.message = desc + '\n单位为分钟，范围 5—1440。';
             a.addTextField('30', String(this.settings[key] || '30')); a.addAction('保存'); a.addCancelAction('取消');
             if (await a.presentAlert() < 0) return;
             const n = Number(a.textFieldValue(0));
             if (!Number.isFinite(n) || n < 5 || n > 1440) return alertMessage('未保存', '请输入 5—1440 之间的分钟数');
             this.settings[key] = String(n); this.saveSettings(false);
+            if (view && this.insertTextByElementId) await this.insertTextByElementId(view, key, String(n));
           } })),
       ] }]);
     }
@@ -1436,10 +1567,11 @@ function createWidgetClass(DmYY) {
     async advancedSettings() {
       const action = (name, title, symbol, color, onClick) => ({ name, title, type: 'input', icon: { name: symbol, color }, onClick });
       return this.renderAppView([{ title: '高级设置', menu: [
-        action('flowAccount', '账户说明', 'person.crop.circle', '#FF9500', () => alertMessage('账户说明',
+        action('flowAccount', '账户说明', 'info.circle', '#FF9500', () => alertMessage('账户说明',
           '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“立即刷新数据”。')),
         { name: 'flowBoxjsDomain', val: 'flowBoxjsDomain', title: 'BoxJS 域名', desc: '只填域名，不含 http://',
-          type: 'input', defaultValue: this.baseSettings.boxjsDomain || 'boxjs.net', placeholder: 'boxjs.net', icon: { name: 'network', color: '#007AFF' } },
+          type: 'input', defaultValue: this.baseSettings.boxjsDomain || 'boxjs.net', placeholder: 'boxjs.net',
+          url: 'https://raw.githubusercontent.com/githubdulong/Script/master/Images/boxjs.png' },
         action('flowCategories', '套餐分类', 'list.bullet', '#007AFF', async () => {
           await this.loadResult();
           if (!this.result) return alertMessage('暂无明细', this.failure);
@@ -1460,7 +1592,7 @@ function createWidgetClass(DmYY) {
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
         action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
         action('flowColors', '颜色配置', 'paintpalette.fill', '#AF52DE', () => this.colorSettings()),
-        action('flowRefreshSettings', '刷新设置', 'clock', '#34C759', () => this.refreshSettings()),
+        action('flowRefreshSettings', '刷新设置', 'timer', '#34C759', () => this.refreshSettings()),
       ] });
       this.registerAction({ title: '用量与数据', menu: [
         action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
@@ -1468,8 +1600,8 @@ function createWidgetClass(DmYY) {
         action('flowProxy', '立即刷新数据', 'arrow.clockwise', '#34C759', () => this.refreshFromQX()),
       ] });
       this.registerAction({ title: '维护', menu: [
-        action('flowReload', '重载组件', 'arrow.clockwise', '#007AFF', () => this.reopenScript()),
-        action('flowClear', '清除历史', 'trash', '#FF3B30', () => this.clearHistory()),
+        action('flowReload', '重载组件', 'arrow.triangle.2.circlepath', '#007AFF', () => this.reopenScript()),
+        action('flowClear', '数据存储明细', 'internaldrive', '#8E8E93', () => this.clearHistory()),
         action('flowAdvanced', '高级设置', 'gearshape.fill', '#8E8E93', () => this.advancedSettings()),
       ] });
     }

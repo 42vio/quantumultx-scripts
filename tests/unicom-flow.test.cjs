@@ -729,6 +729,8 @@ function distributionFixture() {
   class FileManager {
     static local(){return new FileManager();} static iCloud(){return new FileManager();}
     isFileStoredIniCloud(){return cloudFile;} async downloadFileFromiCloud(){cloudDownloads++;} documentsDirectory(){return '/documents';} joinPath(a,b){return a+'/'+b;}
+    listContents(p){return [...files.keys()].filter(key=>key.startsWith(p+'/')&&!key.slice(p.length+1).includes('/')).map(key=>key.slice(p.length+1));}
+    isDirectory(){return false;} fileSize(p){return Buffer.byteLength(files.get(p),'utf8')/1024;}
     fileExists(p){return p.endsWith('/UnicomFlow')||files.has(p);} createDirectory(){} readString(p){return files.get(p);}
     writeString(p,v){if(failScriptWrite && p==='/documents/联通流量.js'){failScriptWrite=false;files.set(p,'partial');throw new Error('write failed');} files.set(p,v);} remove(p){files.delete(p);}
   }
@@ -762,7 +764,7 @@ function distributionFixture() {
   }
   class Alert {
     addTextField(){} textFieldValue(){return fontSizeInput;}
-    addAction(){} addCancelAction(){}
+    addAction(){} addCancelAction(){} addDestructiveAction(){}
     async presentSheet(){return this.presentAlert();}
     async presentAlert(){alerts.push({title:this.title,message:this.message});return alertChoices.length?alertChoices.shift():0;}
   }
@@ -947,6 +949,87 @@ function distributionFixture() {
   const subPage=await instance.fontSettings();
   assert.ok(!subPage.page.html.includes('copyright'));
   const historyFile='/documents/UnicomFlow/history.json';
+  const cleanupOriginal=files.get(historyFile), cleanupRequests=requestCount;
+  const cleanupAt=Date.now()-3600000;
+  const cleanupSample=time=>({...base,at:time,session:'cleanup'});
+  let cleanupHistory=updateHistory(null,cleanupSample(cleanupAt-3600000));
+  cleanupHistory=updateHistory(cleanupHistory,cleanupSample(cleanupAt));
+  files.set(historyFile,JSON.stringify(cleanupHistory));
+  const cleanupMenu=await instance.clearHistory();
+  assert.equal(cleanupMenu.options[0].menu[0].title,'数据文件总大小');
+  assert.deepEqual(Array.from(cleanupMenu.options[1].menu,item=>item.title),['最新套餐快照','刷新记录','短期采样明细','每日汇总','全部历史']);
+  const storedUsage=instance.store.usage();
+  assert.equal(storedUsage.kb,storedUsage.files.reduce((sum,file)=>sum+Buffer.byteLength(files.get('/documents/UnicomFlow/'+file.name),'utf8')/1024,0));
+  assert.equal(cleanupMenu.options[0].menu[0].defaultValue,storedUsage.kb.toFixed(2)+' KB');
+  await cleanupMenu.options[0].menu[0].onClick();assert.ok(alerts.at(-1).message.includes('history.json'));
+  const detailsBefore=files.get(historyFile);
+  const sampleGroups=await cleanupMenu.options[1].menu.find(item=>item.name==='clearHistory_hours').onClick();
+  const sampleDetails=await sampleGroups.options[0].menu[0].onClick();
+  assert.equal(sampleDetails.options[0].menu.length,1);assert.ok(sampleDetails.options[0].menu[0].desc.includes('合计 0 MB'));
+  await sampleDetails.options[0].menu[0].onClick();assert.ok(alerts.at(-1).message.includes('开始：'));assert.ok(alerts.at(-1).message.includes('未确认归属：0 MB'));
+  const dailyGroups=await cleanupMenu.options[1].menu.find(item=>item.name==='clearHistory_months').onClick();
+  assert.ok(dailyGroups.options[0].title.startsWith('每日汇总'));
+  const dailyDetails=await dailyGroups.options[0].menu[0].onClick();assert.ok(dailyDetails.options[0].menu.length>0);
+  await dailyDetails.options[0].menu[0].onClick();assert.ok(alerts.at(-1).message.includes('有效区间：'));
+  alertChoices.push(-1);await dailyDetails.options.at(-1).menu[0].onClick();assert.equal(files.get(historyFile),detailsBefore);
+  const manyDetails={...cleanupHistory,events:Array.from({length:51},(_,i)=>({from:cleanupAt-(i+1)*1000,at:cleanupAt-i*1000,mb:1,mainMB:1,viceMB:0,unknownMB:0}))};
+  files.set(historyFile,JSON.stringify(manyDetails));
+  const manyGroups=await instance.showStoredDetails('hours');
+  const firstDetails=await manyGroups.options[0].menu[0].onClick();assert.equal(firstDetails.options[0].menu.length,50);
+  const lastDetails=await firstDetails.options[1].menu.find(item=>item.name==='storedNext').onClick();assert.equal(lastDetails.options[0].menu.length,1);
+  assert.equal(lastDetails.options[1].menu[0].name,'storedPrevious');assert.equal(requestCount,cleanupRequests);
+  files.delete(historyFile);const emptyDetails=await instance.showStoredDetails('months');assert.equal(emptyDetails.options[0].menu[0].title,'暂无记录');
+  const dayA='2026-11-03',dayB='2026-11-04';
+  const dayTime=day=>new Date(day+'T12:00:00').getTime();
+  const groupedHistory={...cleanupHistory,events:[{from:dayTime(dayA)-1000,at:dayTime(dayA),mb:1},{from:dayTime(dayB)-1000,at:dayTime(dayB),mb:2}],
+    months:{'2026-10':{days:{'2026-10-31':{mb:3,intervals:1}},crossDay:[{from:1,at:2,mb:1}]},'2026-11':{days:{[dayA]:{mb:1,intervals:1}},crossDay:[]}}};
+  files.set(historyFile,JSON.stringify(groupedHistory));
+  const daysList=await instance.showStoredDetails('hours');assert.deepEqual(Array.from(daysList.options[0].menu,item=>item.title),[dayB,dayA]);
+  const selectedDay=await daysList.options[0].menu[0].onClick();
+  alertChoices.push(-1);await selectedDay.options.at(-1).menu[0].onClick();assert.equal(JSON.parse(files.get(historyFile)).events.length,2);
+  await selectedDay.options.at(-1).menu[0].onClick();
+  const afterDayDeletion=JSON.parse(files.get(historyFile));assert.equal(afterDayDeletion.events.length,1);assert.equal(afterDayDeletion.events[0].at,dayTime(dayA));
+  assert.deepEqual(afterDayDeletion.months,groupedHistory.months);assert.deepEqual(afterDayDeletion.data,JSON.parse(JSON.stringify(cleanupHistory.data)));
+  const monthsList=await instance.showStoredDetails('months');assert.deepEqual(Array.from(monthsList.options[0].menu,item=>item.title),['2026-11','2026-10']);
+  const selectedMonth=await monthsList.options[0].menu[1].onClick();assert.equal(selectedMonth.options[0].menu.length,2);
+  await selectedMonth.options.at(-1).menu[0].onClick();
+  const afterMonthDeletion=JSON.parse(files.get(historyFile));assert.deepEqual(Object.keys(afterMonthDeletion.months),['2026-11']);
+  assert.deepEqual(afterMonthDeletion.events,afterDayDeletion.events);assert.deepEqual(afterMonthDeletion.queryTimes,afterDayDeletion.queryTimes);
+  await instance.clearHistoryPart('months','bad-scope');assert.equal(files.get(historyFile),JSON.stringify(afterMonthDeletion));
+  const futureAfterDeletion=updateHistory(afterMonthDeletion,cleanupSample(Date.now()+1000));
+  assert.equal(futureAfterDeletion.months['2026-10'],undefined); // 旧月份不会从短期采样恢复
+  assert.equal(requestCount,cleanupRequests);
+  files.set(historyFile,detailsBefore);
+  await instance.clearHistoryPart('snapshot');
+  const clearedSnapshot=JSON.parse(files.get(historyFile));assert.equal(clearedSnapshot.data,undefined);assert.equal(clearedSnapshot.last,undefined);
+  assert.equal(api.reusableHistory(clearedSnapshot,'cleanup',Date.now()),undefined);
+  assert.deepEqual(clearedSnapshot.events,JSON.parse(JSON.stringify(cleanupHistory.events)));
+  assert.deepEqual(clearedSnapshot.months,JSON.parse(JSON.stringify(cleanupHistory.months)));
+  assert.equal(api.refreshRecords(clearedSnapshot).count,2);
+  const afterSnapshot=updateHistory(clearedSnapshot,cleanupSample(Date.now()));
+  assert.equal(afterSnapshot.events.length,cleanupHistory.events.length);assert.equal(afterSnapshot.data.session,'cleanup');
+  files.set(historyFile,JSON.stringify(cleanupHistory));
+  assert.equal(requestCount,cleanupRequests);
+  alertChoices.push(-1);await instance.clearHistoryPart('all');assert.equal(files.get(historyFile),JSON.stringify(cleanupHistory));
+  await instance.clearHistoryPart('refresh');
+  const clearedLog=JSON.parse(files.get(historyFile));
+  assert.equal(api.refreshRecords(clearedLog).count,0);assert.deepEqual(clearedLog.events,JSON.parse(JSON.stringify(cleanupHistory.events)));
+  assert.deepEqual(clearedLog.months,JSON.parse(JSON.stringify(cleanupHistory.months)));assert.deepEqual(clearedLog.data,JSON.parse(JSON.stringify(cleanupHistory.data)));
+  const afterClearAt=Date.now()+1000;
+  const afterClear=updateHistory(clearedLog,cleanupSample(afterClearAt));
+  assert.equal(api.refreshRecords(afterClear,afterClearAt).count,1);assert.equal(afterClear.queryLogClearedAt,clearedLog.queryLogClearedAt);
+  assert.equal(updateHistory(afterClear,{...cleanupSample(afterClearAt+1),session:'new-cleanup-account'}).queryLogClearedAt,undefined);
+  files.set(historyFile,JSON.stringify(cleanupHistory));
+  await instance.clearHistoryPart('hours');const clearedHours=JSON.parse(files.get(historyFile));
+  assert.equal(clearedHours.events.length,0);assert.deepEqual(clearedHours.months,JSON.parse(JSON.stringify(cleanupHistory.months)));
+  assert.equal(api.refreshRecords(clearedHours).count,2);assert.deepEqual(clearedHours.last,JSON.parse(JSON.stringify(cleanupHistory.last)));
+  files.set(historyFile,JSON.stringify(cleanupHistory));
+  await instance.clearHistoryPart('months');const clearedMonths=JSON.parse(files.get(historyFile));
+  assert.equal(Object.keys(clearedMonths.months).length,0);assert.deepEqual(clearedMonths.events,JSON.parse(JSON.stringify(cleanupHistory.events)));
+  assert.equal(api.refreshRecords(clearedMonths).count,2);
+  await instance.clearHistoryPart('all');assert.equal(files.has(historyFile),false);assert.equal(instance.result,null);
+  assert.equal(requestCount,cleanupRequests);files.set(historyFile,cleanupOriginal);
+
   const oldCached=JSON.parse(files.get(historyFile));delete oldCached.cardHistoryVersion;files.set(historyFile,JSON.stringify(oldCached));
   apiError=true;await instance.loadResult();assert.equal(instance.result,null);
   apiError=false;await instance.loadResult();assert.equal(instance.result.history.events.length,0);assert.equal(JSON.parse(files.get(historyFile)).cardHistoryVersion,1);
@@ -955,8 +1038,15 @@ function distributionFixture() {
   const widgetInterval=basic.options[0].menu.find(item=>item.val==='refreshAfterDate');
   const requestInterval=basic.options[0].menu.find(item=>item.val==='dataRequestMinutes');
   assert.equal(widgetInterval.title,'组件刷新间隔');assert.equal(requestInterval.title,'数据请求间隔');
-  fontSizeInput='10';await widgetInterval.onClick();
-  fontSizeInput='20';await requestInterval.onClick();instance.applySettings();
+  const intervalView={}, intervalUpdates=[];
+  instance.insertTextByElementId=async(view,key,value)=>{assert.equal(view,intervalView);intervalUpdates.push([key,value]);};
+  fontSizeInput='10';await widgetInterval.onClick(null,null,intervalView);
+  fontSizeInput='20';await requestInterval.onClick(null,null,intervalView);instance.applySettings();
+  assert.deepEqual(intervalUpdates,[['refreshAfterDate','10'],['dataRequestMinutes','20']]);
+  alertChoices.push(-1);fontSizeInput='25';await requestInterval.onClick(null,null,intervalView);
+  assert.equal(intervalUpdates.length,2);assert.equal(instance.settings.dataRequestMinutes,'20');
+  fontSizeInput='2';await requestInterval.onClick(null,null,intervalView);assert.equal(intervalUpdates.length,2);
+  delete instance.insertTextByElementId;
   assert.equal(instance.settings.refreshAfterDate,'10');assert.equal(instance.settings.dataRequestMinutes,'20');
   fontSizeInput='2';await requestInterval.onClick();assert.equal(instance.settings.dataRequestMinutes,'20');
   assert.equal(alerts.at(-1).title,'未保存');

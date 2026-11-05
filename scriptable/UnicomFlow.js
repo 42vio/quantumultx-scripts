@@ -951,6 +951,9 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const data = result.history.data, pad = 13;
   const metrics = displayMetrics(data);
   const today = widgetMode(mode) === 'today';
+  // 共享逐卡月明细出现时保留安全间隔；其余布局利用留白向上增高，底边固定。
+  const chartLift = !today && [metrics.left, metrics.right].some(metric => metric && metric.composition
+    && !(metric.composition.complete && metric.composition.main === 0)) ? 0 : 6;
   const daily = today ? [todayPackageUsage(result.history, metrics.leftIds, Date.now()), todayPackageUsage(result.history, metrics.rightIds, Date.now())] : [];
   const now = Date.now();
   const buckets = !medium ? [] : today ? todayBuckets(result.history, now)
@@ -959,13 +962,13 @@ function renderImage(result, medium, width, height, mode = 'month') {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false, today, daily[0]);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false, today, daily[1]);
-    const chartX = pad, chartY = 99, chartW = width - 2 * pad, chartH = height - chartY - 30;
+    const chartX = pad, chartY = 99 - chartLift, chartW = width - 2 * pad, chartH = height - chartY - 30;
     const currentSlot = today ? new Date(now).getHours() : new Date(now).getDate() - 1;
     const cell = chartW / buckets.length, max = Math.max(1, ...buckets.slice(0,currentSlot+1).map(b => b.mb));
     const markers = today ? [0, 6, 12, 18, 23] : [0, 4, 9, 14, 19, 24, buckets.length - 1];
     const minimumBar = 1.5;
     text(ctx, today ? '小时用量' : '每日用量',
-      chartX, 84, chartW - 80, 12, 8, UF.muted);
+      chartX, 84 - chartLift, chartW - 80, 12, 8, UF.muted);
     buckets.forEach((bucket, slot) => {
       const center = chartX + (slot + 0.5) * cell;
       const barWidth = Math.max(1, cell - 4.5);
@@ -1005,7 +1008,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
   text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : todayBuckets(result.history, Date.now()).some(b => b.samples) ? '今日分类未确认' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = 82;
+    const legendY = 82 - chartLift;
     const legends = [{ color: UF.blue, caption: '主卡' }, { color: UF.purple, caption: '副卡' }];
     // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
     const captionWidth = Math.min(65, Math.ceil(Math.max(...legends.map(({ caption }) =>

@@ -553,7 +553,7 @@ function distributionFixture() {
     const expected=13+(hour+0.5)*step;
     const tick=alignedHours.match(new RegExp('<text x="([0-9.]+)"[^>]*text-anchor="middle"[^>]*>'+String(hour).padStart(2,'0')+'</text>'));
     assert.ok(tick); assert.ok(Math.abs(Number(tick[1])-expected)<1e-8);
-    assert.ok(alignedHours.includes(`x="${expected-0.25}" y="99"`));
+    assert.ok(alignedHours.includes(`x="${expected-0.25}" y="93"`));
   }
 
   // 过去小时灰色占位、真实零增量为紫色；当前无采样及未来小时不画柱。
@@ -580,7 +580,7 @@ function distributionFixture() {
     class CalendarDate extends Date {static now(){return time;}}
     const calendarVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:CalendarDate,Color,Rect,Size,Path,DrawContext,Font});
     const image=calendarVisual.renderImage({history:zero,stale:false},true,338,158,'month');
-    assert.equal([...image.matchAll(/width="0.5" height="29"/g)].length,count);assert.ok(image.includes('>'+count+'</text>'));
+    assert.equal([...image.matchAll(/width="0.5" height="35"/g)].length,count);assert.ok(image.includes('>'+count+'</text>'));
   }
   fs.writeFileSync(`${output}/medium-month-chart.svg`,monthWidget);
   const emptyHours={...history,data:{...history.data,at:fixedNoon},events:[]};
@@ -601,6 +601,13 @@ function distributionFixture() {
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158,'today');
   const reusableAtNoon={...reusable,data:{...reusable.data,at:fixedNoon},events:reusable.events.map(e=>({...e,from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}))};
+  for(const mode of ['month','today']) {
+    const taller=noonVisual.renderImage({history:reusableAtNoon,stale:false},true,338,158,mode);
+    assert.ok(taller.includes('y="93" width="0.5" height="35"'));
+    assert.ok(taller.includes('y="82.5" text-anchor="start"') && taller.includes('y="90" text-anchor="start"'));
+    assert.ok(taller.includes('y="137" text-anchor="middle"')); // 时间／日期刻度未下移
+  }
+  assert.ok(monthWidget.includes('y="99" width="0.5" height="29"')); // 有套餐逐卡明细时不压住文字
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
@@ -629,8 +636,8 @@ function distributionFixture() {
   assert.ok(unevenWidget.includes('>主卡</text>'));assert.ok(unevenWidget.includes('>副卡</text>'));
   assert.ok(stackedWidget.includes('>主卡</text>'));assert.ok(stackedWidget.includes('>副卡</text>'));
   const hour10x=13+(10+0.5)*13-4.25;
-  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29*60/90}" width="8.5" height="${29*60/90}" fill="#0A94FF"`));
-  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-29}" width="8.5" height="${29*30/90}" fill="#8A73FF"`));
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-35*60/90}" width="8.5" height="${35*60/90}" fill="#0A94FF"`));
+  assert.ok(stackedWidget.includes(`x="${hour10x}" y="${128-35}" width="8.5" height="${35*30/90}" fill="#8A73FF"`));
 
   // 小号在不同手机尺寸下使用相同的安全留白，显示查询时间且不设刷新按钮。
   for (const side of [141,158,170]) {

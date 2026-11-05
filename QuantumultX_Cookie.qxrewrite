@@ -4,7 +4,7 @@
 # https://github.com/HotKids/Rules/tree/master/Quantumult/X
 # https://github.com/blackmatrix7/ios_rule_script/blob/master/script/gallery.json
 
-hostname = hrmapp.hitrontech.com, sytgate.jslife.com.cn, mcs-mimp-web.sf-express.com, ccsp-egmas.sf-express.com, wapside.189.cn, m.client.10010.com, mxx.client.10010.com, ms.jr.jd.com, me-api.jd.com, api.m.jd.com,passport.iqiyi.com,*.video.qq.com,music.163.com,*.bilibili.com,113.96.156.178,*.ximalaya.com,wx-mini.pagoda.com.c,maicai.api.ddxq.mobi,user-api-prd-mx.wandafilm.com,cms-activity-api-prd-mx.wandafilm.com,*.qunar.com
+hostname = hrmapp.hitrontech.com, sytgate.jslife.com.cn, mcs-mimp-web.sf-express.com, ccsp-egmas.sf-express.com, wapside.189.cn, m.client.10010.com, mxx.client.10010.com, ms.jr.jd.com, me-api.jd.com, api.m.jd.com,passport.iqiyi.com,*.video.qq.com,music.163.com,*.bilibili.com,113.96.156.178,*.ximalaya.com,wx-mini.pagoda.com.c,maicai.api.ddxq.mobi,user-api-prd-mx.wandafilm.com,cms-activity-api-prd-mx.wandafilm.com,*.qunar.com,www.nodeseek.com
 
 ;捷停车
 ^https:\/\/sytgate\.jslife\.com\.cn\/core-gateway\/order\/carno\/pay\/info url script-request-body https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/jparking_sign.js
@@ -43,3 +43,7 @@ hostname = hrmapp.hitrontech.com, sytgate.jslife.com.cn, mcs-mimp-web.sf-express
 ;考勤 App 登录与考勤查询：保存登录响应令牌及请求模板，17:20 重新登录后提醒
 ^https:\/\/hrmapp\.hitrontech\.com:9999\/scsrwd\/SCSService\.asmx url script-request-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/attendance-qx.js
 ^https:\/\/hrmapp\.hitrontech\.com:9999\/scsrwd\/SCSService\.asmx url script-response-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/attendance-qx.js
+
+;NodeSeek 签到：保存登录 Cookie、UA 与反爬版本（打开网页或调用 API 时触发）
+^https:\/\/www\.nodeseek\.com\/api\/ url script-request-header https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/nodeseek.cookie.js
+^https:\/\/www\.nodeseek\.com\/(?:board|post-|categories\/|space\/|member\/|settings) url script-request-header https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/nodeseek.cookie.js

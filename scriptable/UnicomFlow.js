@@ -598,6 +598,18 @@ function hourlyReport(history, at = Date.now(), selectedDay = dayKey(at)) {
     crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
 }
 
+// 只记录成功查询时间，不从用量区间反推请求日志。
+function refreshRecords(history, at = Date.now()) {
+  const times = [...new Set([...(history.queryTimes || []), history.data && history.data.at])]
+    .filter(time => Number.isFinite(time) && time <= at && time >= at - 7 * 86400000).sort((a, b) => a - b);
+  const rows = times.map((time, index) => ({ at: time, interval: index ? time - times[index - 1] : null }))
+    .filter(row => row.at >= at - 86400000);
+  const intervals = rows.map(row => row.interval).filter(value => value != null);
+  return { rows: rows.reverse(), count: rows.length,
+    average: intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : null,
+    longest: intervals.length ? Math.max(...intervals) : null };
+}
+
 function statisticsReports(history, at = Date.now()) {
   // 只在打开页面时生成可选日期／月份的数据，不写入历史或复制保存每日累计。
   const hours = hourlyReport(history, at), month = monthlyReport(history, at), year = yearlyReport(history, at);
@@ -612,7 +624,20 @@ function statisticsReports(history, at = Date.now()) {
   for (const key of Object.keys(history.months || {}).sort()) {
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(key) && key >= year.days[0].key && key < month.month) months[key] = monthlyReport(history, at, key);
   }
-  return { hours, month, year, dates, months };
+  return { hours, month, year, dates, months, refresh: refreshRecords(history, at) };
+}
+
+function previewHTML(images, sizes, mode = 'month', stale = false) {
+  const payload = JSON.stringify(images).replace(/</g, '\\u003c');
+  const light = parseInt(UF.bg.slice(0, 2), 16) > 150;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><style>
+  *{box-sizing:border-box;touch-action:manipulation}[hidden]{display:none!important}body{margin:0;background:${light ? '#F3F5F9' : '#151517'};color:#${UF.text};font:14px -apple-system,sans-serif;-webkit-text-size-adjust:100%}.shell{max-width:520px;padding:56px 18px 30px;margin:auto}h1{font-size:26px;margin:0 0 8px}p{color:#${UF.muted};font-size:12px;line-height:1.7;margin:0 0 18px}.tabs{display:flex;padding:4px;gap:4px;border-radius:14px;background:${light ? '#E7EAF0' : '#2D2D31'};margin-bottom:24px}button{flex:1;min-height:44px;border:0;border-radius:10px;background:none;color:#${UF.muted};font:500 14px -apple-system,sans-serif}button.active{background:#${UF.bg};color:#${UF.text}}button:focus-visible{outline:2px solid #${UF.blue};outline-offset:2px}figure{margin:0 0 24px}figcaption{margin-bottom:10px;font-size:12px;color:#${UF.muted}}img{display:block;max-width:100%;height:auto}.small{width:${sizes.small.width}px;border-radius:22%}.medium{width:${sizes.medium.width}px;border-radius:${sizes.medium.height * .22}px}
+  </style></head><body><main class="shell"><h1>组件预览</h1><p>${stale ? '当前为上次成功查询的缓存数据。' : '小号与中号使用同一份数据。'}切换模式不会额外查询，也不会修改桌面组件参数。</p><nav class="tabs" aria-label="用量模式"><button id="preview-month" type="button">当月</button><button id="preview-today" type="button">今日</button></nav><figure><figcaption>小号</figcaption><img id="preview-small" class="small" alt="小号组件预览" width="${sizes.small.width}" height="${sizes.small.height}"></figure><figure><figcaption>中号</figcaption><img id="preview-medium" class="medium" alt="中号组件预览" width="${sizes.medium.width}" height="${sizes.medium.height}"></figure></main><script>(()=>{
+    const images=${payload};
+    function show(mode){for(const key of ['month','today']){const button=document.getElementById('preview-'+key);button.classList.toggle('active',key===mode);button.setAttribute('aria-pressed',String(key===mode));}for(const size of ['small','medium'])document.getElementById('preview-'+size).src=images[mode][size];}
+    for(const key of ['month','today'])document.getElementById('preview-'+key).onclick=()=>show(key);
+    document.addEventListener('dblclick',event=>event.preventDefault(),{passive:false});show(${JSON.stringify(mode === 'today' ? 'today' : 'month')});
+  })();</script></body></html>`;
 }
 
 function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
@@ -632,8 +657,15 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
   .selected-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.selected-value{font-size:21px;font-weight:500;letter-spacing:-.4px}.selected-cards{display:flex;flex-wrap:wrap;gap:14px;margin:13px 0;font-size:13px}.detail{border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}.status-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--muted)}
   .table-card{padding:18px 0 0;overflow:hidden}.table-card .card-head{padding:0 18px 14px}table{width:100%;min-width:545px;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:right;border-top:1px solid var(--line);padding:13px 12px;white-space:nowrap;font-size:12px}th{font-size:11px;font-weight:400;color:var(--muted);background:var(--soft)}th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:1;background:var(--surface);padding-left:18px}th:first-child{background:var(--soft)}td:last-child{color:var(--muted);font-size:11px}tr.selected td{background:#${soft}}.date{border:0;padding:3px 0;background:none;color:var(--text);font-size:12px}tr.selected .date{color:var(--blue)}
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
+  .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.refresh-summary .mini{padding:12px 9px}.refresh-summary strong{font-size:17px;overflow-wrap:anywhere}.refresh-table{min-width:0}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
   </style></head><body><main class="shell">
-  <header><div><h1>用量统计</h1><div class="eyebrow">采样记录 · 非运营商账单</div></div><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></header>
+  <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
+  <section id="refresh-records" hidden aria-label="刷新记录">
+    <section class="card"><div class="card-head"><h2>最近24小时</h2><span class="hint">成功查询</span></div><div class="refresh-summary"><div class="mini"><div class="mini-label">请求次数</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><p class="refresh-note">间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔包含上一条位于24小时外的记录（如有）。</p></section>
+    <section class="card table-card"><div class="card-head"><h2>请求时间</h2><span class="hint">最新在前</span></div><table class="refresh-table"><thead><tr><th>成功时间</th><th>距上次成功</th></tr></thead><tbody id="refresh-rows"></tbody></table><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无成功查询</div></section>
+    <p class="refresh-note">只记录成功获取联通数据的时间，读取缓存及失败请求不计入。仅保存最近7天的时间戳，不保存接口原文；升级前仅保留最后一次成功时间，不补造历史记录。页面展示打开时的快照，切换页面不会发起请求。</p>
+  </section>
+  <div id="usage-content">
   <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">单日</button><button class="tab" id="tab-month" type="button">单月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
   <div class="period-picker" id="period-picker"><button id="period-prev" type="button" aria-label="前一个周期">‹</button><select id="period-select" aria-label="选择日期"></select><button id="period-next" type="button" aria-label="后一个周期">›</button></div>
   <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i><span id="main-label">主卡</span></div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i><span id="vice-label">副卡</span></div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
@@ -642,7 +674,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
   <section class="card table-card"><div class="card-head"><h2>明细记录</h2><span class="hint">左右滑动查看全部</span></div><div class="scroll"><table><thead><tr><th id="date-heading"></th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div></section>
   <section class="card" id="cross-card"><details><summary id="cross-summary"></summary><p id="cross-description"></p><div id="cross-events"></div></details></section>
   <section class="card"><details><summary>统计口径与数据缺口</summary><p id="scope"></p><p>只统计成功查询间可确认的增量。无数据不等于零；短柱只是占位，用量以数值为准。套餐变更、累计计数回退或跨月时重新建立基线，不推算缺失用量。主卡包括共享部分与独享包；归属无法确认的部分单独列出。</p></details></section>
-  <footer id="updated"></footer></main><script>
+  <footer id="updated"></footer></div></main><script>
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
     const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'单日小时分布',width:500},month:{label:'日期',title:'单月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:0}};
@@ -706,6 +738,19 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
       el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
       select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
     }
+    const queryLog=reports.refresh||{rows:[],count:0,average:null,longest:null};
+    const duration=ms=>ms==null?'—':ms<60000?Math.max(1,Math.round(ms/1000))+'秒':(Math.round(ms/6000)/10)+'分钟';
+    el('refresh-count').textContent=queryLog.count+'次';el('refresh-average').textContent=duration(queryLog.average);el('refresh-longest').textContent=duration(queryLog.longest);
+    el('refresh-empty').hidden=queryLog.rows.length>0;
+    for(const item of queryLog.rows){const row=document.createElement('tr'),time=document.createElement('td'),gap=document.createElement('td');time.textContent=clock(item.at,true);gap.textContent=duration(item.interval);row.append(time,gap);el('refresh-rows').append(row);}
+    let showingRefresh=false, usageScroll=0;
+    el('refresh-records-toggle').onclick=()=>{
+      if(!showingRefresh)usageScroll=typeof scrollY==='number'?scrollY:0;
+      showingRefresh=!showingRefresh;el('refresh-records').hidden=!showingRefresh;el('usage-content').hidden=showingRefresh;
+      el('refresh-records-toggle').textContent=showingRefresh?'返回统计':'刷新记录';el('refresh-records-toggle').setAttribute('aria-expanded',String(showingRefresh));
+      el('page-title').textContent=showingRefresh?'刷新记录':'用量统计';el('page-subtitle').textContent=showingRefresh?'联通数据 · 成功查询时间':'采样记录 · 非运营商账单';
+      if(typeof scrollTo==='function')scrollTo(0,showingRefresh?0:usageScroll);
+    };
     // 禁止双击缩放，但不拦截 touchmove，保留图表和表格的正常滚动。
     document.addEventListener('dblclick',event=>event.preventDefault(),{passive:false});
     el('period-prev').onclick=()=>changePeriod(-1);el('period-next').onclick=()=>changePeriod(1);
@@ -741,6 +786,8 @@ function updateHistory(previous, sample) {
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
   const months = updateMonths(old.months, sample, prev, interval, note);
   return { version: 1, cardHistoryVersion: 1, session: sample.session, events, months, note,
+    queryTimes: [...new Set([...(old.queryTimes || []), old.data && old.data.at, sample.at])]
+      .filter(time => Number.isFinite(time) && time <= sample.at && time >= sample.at - 7 * 86400000).sort((a, b) => a - b),
     last: { at: sample.at, signature, packages: sample.packages, members: (sample.members || []).map(m => ({ id: m.id, role: m.role, roleConflict: m.roleConflict })) }, data: sample };
 }
 
@@ -1140,7 +1187,7 @@ function installUpdate(fm, path, source) {
   }
 }
 
-// DmYY 负责分组配置页与尺寸预览，Cookie 仍逐项直读，不使用批量代理缓存。
+// DmYY 负责分组配置页，预览由本脚本统一生成，Cookie 仍逐项直读。
 function createWidgetClass(DmYY) {
   return class UnicomFlowWidget extends DmYY {
     constructor(arg) {
@@ -1217,11 +1264,30 @@ function createWidgetClass(DmYY) {
       return this.result ? makeWidget(this.result, this.widgetFamily === 'medium', this.flowMode) : errorWidget(this.failure, this.widgetFamily === 'medium');
     }
 
-    // Runing 根据这些方法生成“小尺寸 / 中尺寸”预览入口。
+    // 保留独立尺寸渲染方法，主菜单统一使用同页预览。
     async renderSmall() { this.widgetFamily = 'small'; return this.render(); }
     async renderMedium() { this.widgetFamily = 'medium'; return this.render(); }
 
+    async showPreview() {
+      await this.loadResult();
+      if (!this.result) return alertMessage('组件预览', this.failure || '请先成功查询一次套餐');
+      const sizes = { small: widgetSize(false), medium: widgetSize(true) }, images = {};
+      for (const mode of ['month', 'today']) {
+        images[mode] = {};
+        for (const [size, dimensions] of Object.entries(sizes)) {
+          const image = renderImage(this.result, size === 'medium', dimensions.width, dimensions.height, mode);
+          images[mode][size] = 'data:image/png;base64,' + Data.fromPNG(image).toBase64String();
+        }
+      }
+      const view = new WebView();
+      await view.loadHTML(previewHTML(images, sizes, this.flowMode, this.result.stale));
+      await view.present();
+    }
+
     async renderAppView(options) {
+      // DmYY 自动添加的分尺寸入口由统一预览替代，不修改共享依赖。
+      options = options.filter(group => !(group.title === '预览组件' && group.menu
+        && group.menu.some(item => ['small', 'medium', 'large'].includes(item.name))));
       // 统一清理 DmYY 配置页的样式来源页脚，包含主菜单和全部子菜单。
       // 只调整本组件页面，不改动共享依赖或源码中的来源说明。
       const view = new WebView();
@@ -1261,23 +1327,6 @@ function createWidgetClass(DmYY) {
       await alertMessage(this.failure ? '刷新未完成' : '刷新完成', this.failure || '已读取 QX 保存的 Cookie 并查询最新流量数据，共享记录已更新。桌面组件的重绘时间由 iOS 决定。');
     }
 
-    async showMembers() {
-      await this.loadResult();
-      if (!this.result) return alertMessage('主副卡用量', this.failure);
-      const members = this.result.history.data.members || [];
-      if (!members.length) return alertMessage('主副卡用量', '未识别到成员用量，可能是接口未返回或字段尚未适配。请打开“成员字段检查”复制报告，不能从共享池总量推算逐卡用量。');
-      const a = new Alert(); a.title = '主副卡用量';
-      a.message = (this.result.stale ? '当前为缓存数据。\n' : '') + '按卡查看接口返回的流量包明细；角色未标明时显示“成员卡”。';
-      members.forEach(member => a.addAction(`${member.role} ${member.phone}${member.current ? ' · 当前登录' : ''}`));
-      a.addCancelAction('取消'); const index = await a.presentSheet(); if (index < 0) return;
-      const member = members[index];
-      const lines = member.records.map(record => `${record.name}\n已用：${record.conflict ? '返回数值不一致' : formatMB(record.used)}`);
-      const known = member.records.filter(record => record.used != null && !record.conflict);
-      const summary = known.length ? `已返回明细合计：${formatMB(known.reduce((sum, record) => sum + record.used, 0))}\n\n` : '';
-      await alertMessage(`${member.role} ${member.phone}`, summary + (lines.join('\n\n') || '接口未返回这张卡的用量。')
-        + '\n\n仅统计接口明确归属这张卡的用量，缺失项显示 --，不代表整张卡的全部用量。');
-    }
-
     async showUsageStatistics() {
       await this.loadResult();
       if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
@@ -1307,10 +1356,8 @@ function createWidgetClass(DmYY) {
       if (await confirm.presentAlert() === 0) { this.store.clear(); this.result = null; }
     }
 
-    async basicSettings() {
-      return this.renderAppView([{ title: '基础设置', menu: [
-        { name: 'flowBoxjsDomain', val: 'flowBoxjsDomain', title: 'BoxJS 域名', desc: '只填域名，不含 http://',
-          type: 'input', defaultValue: this.baseSettings.boxjsDomain || 'boxjs.net', placeholder: 'boxjs.net', icon: { name: 'network', color: '#007AFF' } },
+    async refreshSettings() {
+      return this.renderAppView([{ title: '刷新设置', menu: [
         ...[
           ['refreshAfterDate', '组件刷新间隔', '默认30分钟；建议组件重新运行的间隔，实际由 iOS 调度。缓存更早到期时提前请求运行。', 'clock'],
           ['dataRequestMinutes', '数据请求间隔', '默认30分钟；所有组件共用，成功查询后在此间隔内使用缓存；立即刷新数据不受限制。', 'arrow.triangle.2.circlepath'],
@@ -1377,32 +1424,43 @@ function createWidgetClass(DmYY) {
       ] }]);
     }
 
-    registerMenus() {
+    async advancedSettings() {
       const action = (name, title, symbol, color, onClick) => ({ name, title, type: 'input', icon: { name: symbol, color }, onClick });
-      this.registerAction({ title: '组件配置', menu: [
-        action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
-        { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
-        action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
+      return this.renderAppView([{ title: '高级设置', menu: [
+        action('flowAccount', '账户说明', 'person.crop.circle', '#FF9500', () => alertMessage('账户说明',
+          '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“立即刷新数据”。')),
+        { name: 'flowBoxjsDomain', val: 'flowBoxjsDomain', title: 'BoxJS 域名', desc: '只填域名，不含 http://',
+          type: 'input', defaultValue: this.baseSettings.boxjsDomain || 'boxjs.net', placeholder: 'boxjs.net', icon: { name: 'network', color: '#007AFF' } },
         action('flowCategories', '套餐分类', 'list.bullet', '#007AFF', async () => {
           await this.loadResult();
           if (!this.result) return alertMessage('暂无明细', this.failure);
           await chooseCategory(this.store, this.result);
         }),
-        action('flowColors', '颜色配置', 'paintpalette.fill', '#AF52DE', () => this.colorSettings()),
-      ] });
-      this.registerAction({ title: '账户与数据', menu: [
-        action('flowAccount', '账户设置', 'person.crop.circle', '#FF9500', () => alertMessage('账户设置',
-          '使用 QX 现有联通重写保存的 YaYa_10010.cookie，无需手动填写。\n\nCookie 失效时进入联通 App 首页 → 流量查询，再点“立即刷新数据”。')),
-        action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
-        action('flowMembers', '主副卡用量', 'person.2.fill', '#5856D6', () => this.showMembers()),
-        action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
-        action('flowProxy', '立即刷新数据', 'arrow.clockwise', '#34C759', () => this.refreshFromQX()),
         action('flowStatus', '连接检查', 'network', '#007AFF', () => this.connectionStatus()),
+        action('flowMemberDiagnostics', '成员字段检查', 'doc.text.magnifyingglass', '#8E8E93', () => this.memberDiagnostics()),
+      ] }]);
+    }
+
+    registerMenus() {
+      const action = (name, title, symbol, color, onClick) => ({ name, title, type: 'input', icon: { name: symbol, color }, onClick });
+      this.registerAction({ title: '预览组件', menu: [
+        action('flowPreview', '组件预览', 'rectangle.on.rectangle', '#007AFF', () => this.showPreview()),
       ] });
-      this.registerAction({ title: '基础设置', menu: [
-        action('flowBasic', '基础设置', 'gearshape.fill', '#8E8E93', () => this.basicSettings()),
-        action('flowClear', '清除历史', 'trash', '#FF3B30', () => this.clearHistory()),
+      this.registerAction({ title: '组件配置', menu: [
+        action('flowUpdate', '脚本更新', 'arrow.down.circle.fill', '#007AFF', () => this.checkAndUpdateScript()),
+        { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
+        action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
+        action('flowColors', '颜色配置', 'paintpalette.fill', '#AF52DE', () => this.colorSettings()),
+        action('flowRefreshSettings', '刷新设置', 'clock', '#34C759', () => this.refreshSettings()),
+      ] });
+      this.registerAction({ title: '用量与数据', menu: [
+        action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
+        action('flowProxy', '立即刷新数据', 'arrow.clockwise', '#34C759', () => this.refreshFromQX()),
+      ] });
+      this.registerAction({ title: '维护', menu: [
         action('flowReload', '重载组件', 'arrow.clockwise', '#007AFF', () => this.reopenScript()),
+        action('flowClear', '清除历史', 'trash', '#FF3B30', () => this.clearHistory()),
+        action('flowAdvanced', '高级设置', 'gearshape.fill', '#8E8E93', () => this.advancedSettings()),
       ] });
     }
   };

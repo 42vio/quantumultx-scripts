@@ -165,18 +165,37 @@ function formatGB(value, quota = false) {
   return quota ? String(Number(fixed)) : fixed;
 }
 
-// 只使用明确保存的套餐增量，旧逐卡历史不能反推共享／独享今日用量。
+// 复用现有同日区间，不保存第二份套餐增量或今日累计值。
 function todayPackageUsage(history, ids, at) {
   if (!ids.length) return null;
-  let used = 0, samples = 0;
-  for (const event of history.events || []) {
-    if (!Number.isFinite(event.from) || !Number.isFinite(event.at) || event.from >= event.at || event.at > at
-      || dayKey(event.from) !== dayKey(at) || dayKey(event.at) !== dayKey(at) || !Array.isArray(event.packageDeltas)) continue;
-    const values = ids.map(id => event.packageDeltas.find(row => row.id === id));
-    if (values.some(row => !row || !Number.isFinite(row.mb) || row.mb < 0)) continue;
-    used += values.reduce((sum, row) => sum + row.mb, 0); samples++;
-  }
-  return samples ? used : null;
+  const events = (history.events || []).filter(event => Number.isFinite(event.from) && Number.isFinite(event.at)
+    && event.from < event.at && event.at <= at && dayKey(event.from) === dayKey(at) && dayKey(event.at) === dayKey(at)
+    && Number.isFinite(event.mb) && event.mb >= 0);
+  if (!events.length) return null;
+  const sum = usageSummary(events);
+  const packages = history.data.packages.filter(p => p.category !== 'ignore');
+  const selected = packages.filter(p => ids.includes(p.id));
+  if (!selected.length || selected.length !== ids.length) return null;
+  if (sum.mb === 0) return 0; // 总增量确认为零时，各套餐也都是零。
+  // 单一分类可以直接复用整个区间总量，包含未知成员归属的部分。
+  if (selected.length === packages.length) return sum.mb;
+  // 累计用量为零的套餐，已有采样区间也必定为零。
+  if (selected.every(p => p.used === 0)) return 0;
+  if (packages.filter(p => !ids.includes(p.id)).every(p => p.used === 0)) return sum.mb;
+  // 当前账户的共享池主卡累计值确认为零时，旧逐卡增量可准确对应共享／独享。
+  // 主卡也用了共享池、有其他分类或当前成员不完整时不按比例猜测。
+  if (!packages.every(p => p.category === 'general' && typeof p.shared === 'boolean')
+    || !events.every(e => [e.mainMB,e.viceMB,e.unknownMB].every(n => Number.isFinite(n) && n >= 0)
+      && Math.abs(e.mainMB + e.viceMB + e.unknownMB - e.mb) <= 1e-6)) return null;
+  const shared = packages.filter(p => p.shared), exclusive = packages.filter(p => !p.shared);
+  const composition = sharedComposition(shared, history.data.members || []);
+  if (!shared.length || !exclusive.length || !composition.complete || composition.main !== 0) return null;
+  if (sum.mainMB > exclusive.reduce((n,p) => n + p.used,0) + 0.02
+    || sum.viceMB + sum.unknownMB > shared.reduce((n,p) => n + p.used,0) + 0.02) return null;
+  // 独享包原来已明确计入主卡；仅这两类套餐时，未知成员归属的增量仍属于共享池。
+  if (selected.length === shared.length && selected.every(p => p.shared)) return sum.viceMB + sum.unknownMB;
+  if (selected.length === exclusive.length && selected.every(p => !p.shared)) return sum.mainMB;
+  return null;
 }
 
 function dayKey(time) {
@@ -654,7 +673,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
 function updateHistory(previous, sample) {
   const old = previous && previous.version === 1 && previous.cardHistoryVersion === 1 && previous.session === sample.session ? previous : {};
   let events = Array.isArray(old.events) ? old.events.filter(e =>
-    Number.isFinite(e.at) && e.at <= sample.at && e.at >= sample.at - 7 * 86400000) : [];
+    Number.isFinite(e.at) && e.at <= sample.at && e.at >= sample.at - 7 * 86400000)
+    .map(({ packageDeltas, ...event }) => event) : []; // 清理上一版冗余字段，保留原有逐卡历史。
   const prev = old.last;
   if (prev && sample.at <= prev.at) return old;
   let note = '正在积累数据', interval = null;
@@ -669,8 +689,7 @@ function updateHistory(previous, sample) {
       delta += p.used - before;
     }
     if (valid) {
-      interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample),
-        packageDeltas: sample.packages.filter(p => p.category !== 'ignore').map(p => ({ id: p.id, mb: p.used - lastUse.get(p.id) })) };
+      interval = { from: prev.at, at: sample.at, mb: delta, ...cardDelta(prev, sample) };
       // 跨午夜的区间不能归为“今日”用量；不拆分或插值。
       if (dayKey(prev.at) === dayKey(sample.at)) events.push(interval);
       note = '今日区间增量 · 按采样时刻';
@@ -921,7 +940,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
+  text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : todayBuckets(result.history, Date.now()).some(b => b.samples) ? '今日分类未确认' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
     const legendY = 78;

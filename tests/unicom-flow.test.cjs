@@ -207,28 +207,49 @@ function distributionFixture() {
   assert.equal(retainedCards.events[1].mainMB,20);assert.equal(retainedCards.events[1].viceMB,10);
 
   const packageIds=api.displayMetrics(cardNext.data);
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at+3600000),40);
-  assert.equal(api.todayPackageUsage(cardNext,packageIds.rightIds,at+3600000),50);
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at+3600000),null);
+  assert.equal(api.todayPackageUsage(cardNext,packageIds.rightIds,at+3600000),null);
   assert.equal(api.todayPackageUsage(cardStart,packageIds.leftIds,at),null);
   const noPackageHistory={...cardNext,events:cardNext.events.map(({packageDeltas,...event})=>event)};
   assert.equal(api.todayPackageUsage(noPackageHistory,packageIds.leftIds,at+3600000),null);
   const zeroPackages=updateHistory(cardNext,cardSample(at+7200000,110,230,350));
-  assert.equal(api.todayPackageUsage({...zeroPackages,events:zeroPackages.events.slice(-1)},packageIds.leftIds,at+7200000),0);
+  assert.equal(api.todayPackageUsage({...zeroPackages,events:zeroPackages.events.slice(-1)},packageIds.leftIds,at+7200000),0); // 总增量为零时，各套餐也均为零
   assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,at),null); // 不计未来事件
   assert.equal(api.todayPackageUsage(cardNext,packageIds.leftIds,midnight),null); // 不计昨天
   assert.equal(api.todayPackageUsage(cardNext,[],at+3600000),null);
-  const invalidPackages={...cardNext,events:cardNext.events.map(e=>({...e,packageDeltas:[{id:packageIds.leftIds[0],mb:-1}]}))};
+  const invalidPackages={...cardNext,events:cardNext.events.map(e=>({...e,mb:-1}))};
   assert.equal(api.todayPackageUsage(invalidPackages,packageIds.leftIds,at+3600000),null);
   for(const [value,expected] of [[6.8*1024,'6.8'],[0.53*1024,'0.53'],[0.001*1024,'<0.01'],[0,'0'],[null,'—']]) assert.equal(api.formatGB(value),expected);
   assert.equal(api.formatGB(120*1024,true),'120');assert.equal(api.formatGB(80.5*1024,true),'80.5');
   for(const [parameter,mode] of [['','month'],['month','month'],[' today ','today'],['TODAY','today'],['unknown','month']]) assert.equal(api.widgetMode(parameter),mode);
   assert.equal(formatMB(0.001,'daily'),'<0.01MB');
+  const reusableStart=updateHistory(null,cardSample(at,0,200,300));
+  const reusable=updateHistory(reusableStart,cardSample(at+3600000,0,230,350));
+  const reusableIds=api.displayMetrics(reusable.data);
+  assert.equal(api.todayPackageUsage(reusable,reusableIds.leftIds,at+3600000),30);
+  assert.equal(api.todayPackageUsage(reusable,reusableIds.rightIds,at+3600000),50);
+  const sharedUnknown={...reusable,events:reusable.events.map(e=>({...e,viceMB:20,unknownMB:10}))};
+  assert.equal(api.todayPackageUsage(sharedUnknown,reusableIds.leftIds,at+3600000),30);
+  assert.equal(api.todayPackageUsage(sharedUnknown,reusableIds.rightIds,at+3600000),50);
+  assert.ok(!JSON.stringify(reusable).includes('packageDeltas'));
+  const unchanged=updateHistory(reusable,cardSample(at+7200000,0,230,350));
+  assert.equal(api.todayPackageUsage(unchanged,reusableIds.leftIds,at+7200000),30); // 新增零区间不能覆盖旧的今日正用量
+  const reusedZero={...unchanged,events:unchanged.events.slice(-1)};
+  assert.equal(api.todayPackageUsage(reusedZero,reusableIds.leftIds,at+7200000),0);
+  const missingCardParts={...reusable,events:reusable.events.map(({mainMB,viceMB,unknownMB,...e})=>e)};
+  assert.equal(api.todayPackageUsage(missingCardParts,reusableIds.leftIds,at+3600000),null);
+  const withRedundant={...reusable,events:reusable.events.map(e=>({...e,packageDeltas:[{id:'extra',mb:999}]}))};
+  const cleaned=updateHistory(withRedundant,cardSample(at+7200000,0,230,350));
+  assert.ok(!JSON.stringify(cleaned).includes('packageDeltas'));assert.equal(cleaned.events[0].mb,reusable.events[0].mb);
+  assert.equal(api.todayPackageUsage(reusable,reusable.data.packages.map(p=>p.id),at+3600000),80);
+  const mixedGroups={...reusable,data:{...reusable.data,packages:[...reusable.data.packages,{id:'directed',category:'directed',used:99}]}};
+  assert.equal(api.todayPackageUsage(mixedGroups,reusableIds.leftIds,at+3600000),null);
   const cardBuckets=todayBuckets(cardNext,at);
   assert.equal(cardBuckets[11].mainMB,60);assert.equal(cardBuckets[11].viceMB,30);
   const cardMonth=api.monthlyReport(cardNext,at);
   assert.equal(cardMonth.days[2].mainMB,60);assert.equal(cardMonth.days[2].viceMB,30);
   const unknownCard=updateHistory(cardStart,cardSample(at+3600000,110,230,350,false));
-  assert.equal(api.todayPackageUsage(unknownCard,packageIds.leftIds,at+3600000),40); // 套餐今日用量不受成员缺失影响
+  assert.equal(api.todayPackageUsage(unknownCard,packageIds.leftIds,at+3600000),null); // 归属不完整时不猜测
   assert.equal(unknownCard.events[0].mainMB,50);assert.equal(unknownCard.events[0].unknownMB,40);
   const memberRollback=updateHistory(cardStart,cardSample(at+3600000,90,250,350));
   assert.equal(memberRollback.events[0].mainMB,50);assert.equal(memberRollback.events[0].unknownMB,40);
@@ -504,17 +525,18 @@ function distributionFixture() {
 
   const cardAtNoon={...cardNext,events:[{...cardNext.events[0],from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}]};
   const stackedWidget=noonVisual.renderImage({history:cardAtNoon,stale:false},true,338,158);
+  const reusableAtNoon={...reusable,data:{...reusable.data,at:fixedNoon},events:reusable.events.map(e=>({...e,from:new Date(2026,10,4,9).getTime(),at:new Date(2026,10,4,10).getTime()}))};
   for(const medium of [false,true]) {
-    const todayImage=noonVisual.renderImage({history:cardAtNoon,stale:false},medium,medium?338:158,158,'today');
+    const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
-    assert.ok(todayImage.includes('>40.00</text>'));assert.ok(todayImage.includes('>50.00</text>'));
-    assert.ok(todayImage.includes('>0.33/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
+    assert.ok(todayImage.includes('>30.00</text>'));assert.ok(todayImage.includes('>50.00</text>'));
+    assert.ok(todayImage.includes('>0.22/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
     assert.ok(!/>[^<]*%[^<]*<\/text>/.test(todayImage));assert.ok(!todayImage.includes('本月'));
     assert.ok(todayImage.includes('今日已记录'));assert.ok(!todayImage.includes('主 60.00MB'));
     if(medium) {assert.ok(todayImage.includes('>主卡</text>'));assert.ok(todayImage.includes('>副卡</text>'));assert.ok(todayImage.includes('小时用量'));}
-    const missingImage=noonVisual.renderImage({history:{...cardAtNoon,events:[]},stale:false},medium,medium?338:158,158,'today');
+    const missingImage=noonVisual.renderImage({history:{...reusableAtNoon,events:[]},stale:false},medium,medium?338:158,158,'today');
     assert.ok(missingImage.includes('>—</text>'));assert.ok(!missingImage.includes('>0</text>'));assert.ok(missingImage.includes('今日待采样'));
-    const zeroImage=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:0,packageDeltas:e.packageDeltas.map(p=>({...p,mb:0}))}))},stale:false},medium,medium?338:158,158,'today');
+    const zeroImage=noonVisual.renderImage({history:{...reusableAtNoon,events:reusableAtNoon.events.map(e=>({...e,mb:0,mainMB:0,viceMB:0,unknownMB:0}))},stale:false},medium,medium?338:158,158,'today');
     assert.ok(zeroImage.includes('>0</text>'));assert.ok(zeroImage.includes('今日已记录'));
     fs.writeFileSync(`${output}/${medium?'medium':'small'}-today.svg`,todayImage);
   }
@@ -842,5 +864,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: month/today参数独立渲染及刷新保留模式/今日按套餐增量/旧记录保留不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: month/today参数独立渲染及刷新保留模式/今日复用既有逐卡区间/删除冗余套餐字段/零区间不覆盖旧用量/归属不明确不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

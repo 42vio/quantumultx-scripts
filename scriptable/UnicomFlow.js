@@ -483,6 +483,42 @@ function eventDate(event) {
     : dayKey(event.from) === dayKey(event.at) ? dayKey(event.at) : null;
 }
 
+// 只迁移仍保存的跨日原始区间；移出待分配列表后再次运行不会重复累计。
+function migrateSmallCrossDays(history, at = Date.now()) {
+  if (!history || !history.months || UF.crossDayLimitMB <= 0) return history;
+  let changed = false;
+  const next = JSON.parse(JSON.stringify(history));
+  for (const [monthKey, month] of Object.entries(next.months)) {
+    const remaining = [];
+    for (const event of month.crossDay || []) {
+      const assignedAt = smallCrossDayTime(event);
+      if (assignedAt == null || event.at > at || dayKey(event.from).slice(0, 7) !== monthKey
+        || dayKey(event.at).slice(0, 7) !== monthKey) { remaining.push(event); continue; }
+      const key = dayKey(assignedAt);
+      month.days = month.days || {};
+      const day = month.days[key] || (month.days[key] = { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0, intervals: 0, first: null, last: null, notes: [] });
+      day.mb += event.mb; day.intervals++;
+      for (const [part, value] of Object.entries(eventParts(event))) day[part] = (day[part] || 0) + value;
+      day.first = day.first == null ? event.from : Math.min(day.first, event.from);
+      day.last = day.last == null ? event.at : Math.max(day.last, event.at);
+      day.notes = day.notes || [];
+      day.notes.push(`跨日小流量近似归入（${new Date(event.from).toLocaleString('zh-CN', { hour12: false })} → ${new Date(event.at).toLocaleString('zh-CN', { hour12: false })}）`);
+      if (event.at >= at - 7 * 86400000 && !(next.events || []).some(saved => saved.from === event.from && saved.at === event.at)) {
+        (next.events || (next.events = [])).push({ ...event, assignedAt });
+      }
+      changed = true;
+    }
+    month.crossDay = remaining;
+    for (const [date, day] of Object.entries(month.days || {})) {
+      if (!remaining.some(event => dayKey(event.from) <= date && dayKey(event.at) >= date))
+        day.notes = (day.notes || []).filter(note => note !== '跨日区间未分配');
+    }
+  }
+  if (!changed) return history;
+  next.events = (next.events || []).sort((a, b) => a.at - b.at);
+  return next;
+}
+
 function updateMonths(previous, sample, prev, interval, note) {
   const months = JSON.parse(JSON.stringify(previous || {}));
   const now = new Date(sample.at);
@@ -657,7 +693,7 @@ function previewHTML(images, sizes, mode = 'month', stale = false) {
   const payload = JSON.stringify(images).replace(/</g, '\\u003c');
   const light = parseInt(UF.bg.slice(0, 2), 16) > 150;
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><style>
-  *{box-sizing:border-box;touch-action:manipulation}[hidden]{display:none!important}body{margin:0;background:${light ? '#F3F5F9' : '#151517'};color:#${UF.text};font:14px -apple-system,sans-serif;-webkit-text-size-adjust:100%}.shell{max-width:520px;padding:56px 18px 30px;margin:auto}h1{font-size:26px;margin:0 0 8px}p{color:#${UF.muted};font-size:12px;line-height:1.7;margin:0 0 18px}.tabs{display:flex;padding:4px;gap:4px;border-radius:14px;background:${light ? '#E7EAF0' : '#2D2D31'};margin-bottom:24px}button{flex:1;min-height:44px;border:0;border-radius:10px;background:none;color:#${UF.muted};font:500 14px -apple-system,sans-serif}button.active{background:#${UF.bg};color:#${UF.text}}button:focus-visible{outline:2px solid #${UF.blue};outline-offset:2px}figure{margin:0 0 24px}figcaption{margin-bottom:10px;font-size:12px;color:#${UF.muted}}img{display:block;max-width:100%;height:auto}.small{width:${sizes.small.width}px;border-radius:22%}.medium{width:${sizes.medium.width}px;border-radius:${sizes.medium.height * .22}px}
+  *{box-sizing:border-box;touch-action:manipulation}[hidden]{display:none!important}body{margin:0;background:${light ? '#F3F5F9' : '#151517'};color:#${UF.text};font:14px -apple-system,sans-serif;-webkit-text-size-adjust:100%}.shell{max-width:520px;padding:52px 18px 24px;margin:auto}h1{font-size:26px;margin:0 0 8px}p{color:#${UF.muted};font-size:12px;line-height:1.7;margin:0 0 18px}.tabs{display:flex;padding:4px;gap:4px;border-radius:14px;background:${light ? '#E7EAF0' : '#2D2D31'};margin-bottom:24px}button{flex:1;min-height:44px;border:0;border-radius:10px;background:none;color:#${UF.muted};font:500 14px -apple-system,sans-serif}button.active{background:#${UF.bg};color:#${UF.text}}button:focus-visible{outline:2px solid #${UF.blue};outline-offset:2px}figure{margin:0 0 24px}figcaption{margin-bottom:10px;font-size:12px;color:#${UF.muted}}img{display:block;max-width:100%;height:auto}.small{width:${sizes.small.width}px;border-radius:22%}.medium{width:${sizes.medium.width}px;border-radius:${sizes.medium.height * .22}px}
   </style></head><body><main class="shell"><h1>组件预览</h1><p>${stale ? '当前为上次成功查询的缓存数据。' : '小号与中号使用同一份数据。'}切换模式不会额外查询，也不会修改桌面组件参数。</p><nav class="tabs" aria-label="用量模式"><button id="preview-month" type="button">当月</button><button id="preview-today" type="button">今日</button></nav><figure><figcaption>小号</figcaption><img id="preview-small" class="small" alt="小号组件预览" width="${sizes.small.width}" height="${sizes.small.height}"></figure><figure><figcaption>中号</figcaption><img id="preview-medium" class="medium" alt="中号组件预览" width="${sizes.medium.width}" height="${sizes.medium.height}"></figure></main><script>(()=>{
     const images=${payload};
     function show(mode){for(const key of ['month','today']){const button=document.getElementById('preview-'+key);button.classList.toggle('active',key===mode);button.setAttribute('aria-pressed',String(key===mode));}for(const size of ['small','medium'])document.getElementById('preview-'+size).src=images[mode][size];}
@@ -674,16 +710,18 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><style>
   :root{color-scheme:${light ? 'light' : 'dark'};--text:#${UF.text};--muted:#${UF.muted};--blue:#${UF.blue};--purple:#${UF.purple};--warning:#${UF.warning};--line:#${border};--surface:#${surface};--soft:#${soft}}
   *{box-sizing:border-box;touch-action:manipulation}body{margin:0;background:#${page};color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;-webkit-text-size-adjust:100%}button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
-  .shell{max-width:760px;margin:auto;padding:56px 18px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}h1{font-size:26px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
-  .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:14px}.tab{border:0;background:transparent;padding:10px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
-  .period-picker{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:8px;margin-bottom:18px}.period-picker button{height:44px;border:0;border-radius:12px;background:var(--soft);font-size:22px}.period-picker button:disabled{opacity:.3}.period-picker select{width:100%;min-width:0;height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;color:var(--text);background:var(--surface);font:500 16px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center}.period-picker select:disabled{opacity:1}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:22px 20px}.period-label{font-size:13px;color:var(--muted)}.total{margin:10px 0 12px;font-variant-numeric:tabular-nums;letter-spacing:-1.5px;font-size:42px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
-  h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--muted);margin:15px 0 8px}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
+  .shell{max-width:760px;margin:auto;padding:52px 18px 24px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}h1{font-size:24px;letter-spacing:-.6px;margin:0 0 4px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
+  .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:8px}.tab{border:0;background:transparent;padding:8px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
+  .period-picker{display:grid;grid-template-columns:36px minmax(0,1fr) 36px;align-items:center;gap:6px;margin-bottom:10px}.period-picker button{height:36px;border:0;border-radius:12px;background:var(--soft);font-size:22px}.period-picker button:disabled{opacity:.3}.period-picker select{width:100%;min-width:0;height:36px;border:1px solid var(--line);border-radius:12px;padding:0 12px;color:var(--text);background:var(--surface);font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center}.period-picker select:disabled{opacity:1}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:15px 16px}.period-label{font-size:13px;color:var(--muted)}.total{margin:6px 0 8px;font-variant-numeric:tabular-nums;letter-spacing:-1px;font-size:36px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
+  h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.chart-meta{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin:12px 0 8px}.chart-max{font-size:11px;white-space:nowrap;color:var(--muted)}.chart-max strong{font-weight:500;color:var(--text);margin-left:5px;font-variant-numeric:tabular-nums}.legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:14px;font-size:11px;color:var(--muted);margin-left:auto}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
   .scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.chart{display:flex;align-items:stretch;gap:5px;height:180px;padding:8px 3px 3px;background:repeating-linear-gradient(to bottom,var(--line) 0,var(--line) 1px,transparent 1px,transparent 70px);background-size:100% 141px;background-position:0 10px;background-repeat:no-repeat}.bar{flex:1;min-width:14px;padding:0 1px;border:0;background:transparent;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;gap:9px}.fill{display:flex;flex-direction:column-reverse;overflow:hidden;width:100%;border-radius:4px 4px 1px 1px;background:var(--purple)}.fill.missing{background:#${UF.track}}.fill.future{background:transparent}.segment{display:block;width:100%;flex-shrink:0}.tick{height:18px;min-width:18px;padding:2px 4px;line-height:14px;border-radius:6px;font-size:10px;color:var(--muted);white-space:nowrap}.bar.selected .tick{background:var(--blue);color:#fff;font-weight:600}.chart-foot{margin-top:10px;line-height:1.6;font-size:11px;color:var(--muted)}
   .selected-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.selected-value{font-size:21px;font-weight:500;letter-spacing:-.4px}.selected-cards{display:flex;flex-wrap:wrap;gap:14px;margin:13px 0;font-size:13px}.detail{border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}.status-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--muted)}
   .table-card{padding:18px 0 0;overflow:hidden}.table-card .card-head{padding:0 18px 14px}table{width:100%;min-width:545px;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:right;border-top:1px solid var(--line);padding:13px 12px;white-space:nowrap;font-size:12px}th{font-size:11px;font-weight:400;color:var(--muted);background:var(--soft)}th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:1;background:var(--surface);padding-left:18px}th:first-child{background:var(--soft)}td:last-child{color:var(--muted);font-size:11px}tr.selected td{background:#${soft}}.date{border:0;padding:3px 0;background:none;color:var(--text);font-size:12px}tr.selected .date{color:var(--blue)}
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
-  .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.refresh-summary .mini{padding:12px 9px}.refresh-summary strong{font-size:17px;overflow-wrap:anywhere}.refresh-table{min-width:0}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
+  .records-details>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 18px 18px;list-style:none;font-size:15px;font-weight:600}.records-details>summary::-webkit-details-marker{display:none}.records-details>summary .hint{margin-left:auto;font-weight:400}.records-details>summary::after{content:"›";font-size:22px;color:var(--muted);transform:rotate(90deg)}.records-details[open]>summary::after{transform:rotate(-90deg)}
+  .hero .totals{margin-top:10px;gap:8px}.hero .mini{padding:8px 10px}.hero .mini strong{font-size:18px;margin-top:3px}.hero .coverage{line-height:1.4}.hero .range-note{margin-top:6px}.badge:not(.cached){display:none}
+  .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.refresh-summary .mini{padding:12px 9px}.refresh-summary strong{font-size:17px;overflow-wrap:anywhere}.refresh-table{min-width:0}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
   </style></head><body><main class="shell">
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
@@ -695,9 +733,9 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">单日</button><button class="tab" id="tab-month" type="button">单月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
   <div class="period-picker" id="period-picker"><button id="period-prev" type="button" aria-label="前一个周期">‹</button><select id="period-select" aria-label="选择日期"></select><button id="period-next" type="button" aria-label="后一个周期">›</button></div>
   <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i><span id="main-label">主卡</span></div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i><span id="vice-label">副卡</span></div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
-  <section class="card"><div class="card-head"><h2 id="chart-title"></h2><span id="chart-count" class="hint"></span></div><div class="legend"><span><i class="dot blue"></i>主卡</span><span><i class="dot purple"></i>副卡</span><span id="unknown-legend"><i class="dot amber"></i>未确认</span><span><i class="dot gray"></i>无数据</span></div><div class="scroll"><div id="chart" class="chart"></div></div><div id="chart-foot" class="chart-foot"></div></section>
+  <section class="card"><div class="card-head"><h2 id="chart-title"></h2><span id="chart-count" class="hint"></span></div><div class="chart-meta"><div class="chart-max">MAX<strong id="chart-max-value">—</strong></div><div class="legend"><span><i class="dot blue"></i>主卡</span><span><i class="dot purple"></i>副卡</span><span id="unknown-legend"><i class="dot amber"></i>未确认</span></div></div><div class="scroll"><div id="chart" class="chart"></div></div><div id="chart-foot" class="chart-foot"></div></section>
   <section class="card"><div class="selected-heading"><h2 id="selected"></h2><span id="selected-total" class="selected-value"></span></div><div class="selected-cards"><span id="selected-main" class="main"></span><span id="selected-vice" class="vice"></span><span id="selected-unknown" class="unconfirmed"></span></div><div id="detail" class="detail"></div><p id="selected-note" class="status-note"></p></section>
-  <section class="card table-card"><div class="card-head"><h2>明细记录</h2><span class="hint">左右滑动查看全部</span></div><div class="scroll"><table><thead><tr><th id="date-heading"></th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+  <section class="card table-card"><details id="usage-records" class="records-details"><summary>明细记录<span class="hint">展开后可左右滑动</span></summary><div class="scroll"><table><thead><tr><th id="date-heading"></th><th>主卡</th><th>副卡</th><th>未确认</th><th>合计</th><th>记录情况</th></tr></thead><tbody id="rows"></tbody></table></div></details></section>
   <section class="card" id="cross-card"><details><summary id="cross-summary"></summary><p id="cross-description"></p><div id="cross-events"></div></details></section>
   <section class="card"><details><summary>统计口径与数据缺口</summary><p id="scope"></p><p>只统计成功查询间可确认的增量。无数据不等于零；短柱只是占位，用量以数值为准。套餐变更、累计计数回退或跨月时重新建立基线，不推算缺失用量。主卡包括共享部分与独享包；归属无法确认的部分单独列出。</p></details></section>
   <footer id="updated"></footer></div></main><script>
@@ -746,7 +784,9 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
       if(key==='hours'&&!recorded)el('coverage').textContent=(report.month===reports.hours.month?'今日':'所选日期')+'暂无有效采样 · 未补零';
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
-      const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
+      // 最高柱占绘图区约85%，与顶部网格线留出稳定间距。
+      const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak?peak/0.85:1;
+      el('chart-max-value').textContent=amount(report.days.some(d=>!d.future&&d.mb!=null)?peak:null);
       for(const d of report.days){
         const button=document.createElement('button');button.type='button';button.className='bar';button.dataset.key=d.key;button.setAttribute('aria-label',d.key+' '+amount(d.mb));
         const fill=document.createElement('span');fill.className='fill'+(d.future?' future':d.mb==null?' missing':'');fill.style.height=(d.future?0:d.mb==null?4:Math.max(4,d.mb/max*140))+'px';
@@ -1132,20 +1172,19 @@ function renderImage(result, medium, width, height, mode = 'month') {
     : incomplete ? '逐卡明细不全' : status ? '另有明细' : '';
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
-  // 大小卡片始终显示最后成功查询时间；异常状态保留提示。
-  text(ctx, today && !status ? `${daily.some(value => value != null) ? '今日已记录' : todayBuckets(result.history, Date.now()).some(b => b.samples) ? '今日分类未确认' : '今日待采样'} · ${label}` : label, pad + 2, height - (medium ? 18 : 15), width - 2 * pad - 4, 9, 6.5,
+  // 图例解释整张卡片，置于底部右侧；左侧预留更新时间及异常提示。
+  const footerY = height - (medium ? 18 : 15);
+  const dailyHint = today && !status && !daily.some(value => value != null)
+    ? (todayBuckets(result.history, now).some(b => b.samples) ? '今日分类未确认' : '今日待采样') : '';
+  text(ctx, dailyHint ? `${dailyHint} · ${label}` : label, pad + 2, footerY,
+    width - 2 * pad - 4 - (medium ? 62 : 0), 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendY = 82 - chartLift;
-    const legends = [{ color: UF.blue, caption: '主卡' }, { color: UF.purple, caption: '副卡' }];
-    // 整组靠右，组内左对齐：圆点、卡名和数字起点不随两行数字长短错开。
-    const captionWidth = Math.min(65, Math.ceil(Math.max(...legends.map(({ caption }) =>
-      Array.from(caption).reduce((sum, c) => sum + 6.5 * (c.charCodeAt(0) > 255 ? 1 : c === ' ' ? 0.3 : 0.6), 0)))) + 2);
-    const legendX = width - pad - captionWidth - 5;
-    legends.forEach(({ color, caption }, index) => {
-      const y = legendY + index * 7.5;
-      roundedRect(ctx, legendX, y + 3, 2.5, 2.5, 1.25, color);
-      text(ctx, caption, legendX + 5, y, captionWidth, 9, 6.5, UF.muted);
+    const legendX = width - pad - 54;
+    [{ color: UF.blue, caption: '主卡' }, { color: UF.purple, caption: '副卡' }].forEach(({ color, caption }, index) => {
+      const x = legendX + index * 30;
+      roundedRect(ctx, x, footerY + 3, 2.5, 2.5, 1.25, color);
+      text(ctx, caption, x + 5, footerY, 19, 9, 6.5, UF.muted);
     });
   }
   return ctx.getImage();
@@ -1293,7 +1332,12 @@ function createWidgetClass(DmYY) {
     async loadResult(force = false) {
       this.result = null;
       this.failure = '';
-      try { this.applySettings(); this.result = await refresh(this.store, force); }
+      try {
+        this.applySettings();
+        const saved = this.store.read('history', null), migrated = migrateSmallCrossDays(saved);
+        if (migrated !== saved) this.store.write('history', migrated);
+        this.result = await refresh(this.store, force);
+      }
       catch (error) {
         this.failure = error.message || '查询失败';
         const old = this.store.read('history', null);
@@ -1579,10 +1623,10 @@ function createWidgetClass(DmYY) {
         }),
         { name: 'crossDayLimitMB', val: 'crossDayLimitMB', title: '跨日小流量阈值', type: 'input',
           defaultValue: String(this.settings.crossDayLimitMB == null ? UF_DEFAULTS.crossDayLimitMB : this.settings.crossDayLimitMB),
-          desc: '单位 MB；默认10，0关闭；仅影响后续采样，已有记录不重算', icon: { name: 'moon.stars', color: '#8A73FF' },
+          desc: '单位 MB；默认10，0关闭；已有待分配区间会按新阈值归入，已归入记录不重算', icon: { name: 'moon.stars', color: '#8A73FF' },
           onClick: async (_, __, view) => {
             const a = new Alert(); a.title = '跨日小流量阈值';
-            a.message = '输入0—1024 MB，支持小数，0关闭。仅跨一个午夜且不超过阈值的用量近似归入覆盖时长较长的日期，相同则归后一天。已有记录不重算，跨月仍重新建立基线。';
+            a.message = '输入0—1024 MB，支持小数，0关闭。仅跨一个午夜且不超过阈值的用量近似归入覆盖时长较长的日期，相同则归后一天。已有待分配区间会按新阈值归入，已归入记录不重算；跨月仍重新建立基线。';
             a.addTextField('10', String(this.settings.crossDayLimitMB == null ? UF_DEFAULTS.crossDayLimitMB : this.settings.crossDayLimitMB));
             a.addAction('保存'); a.addCancelAction('取消'); if (await a.presentAlert() < 0) return;
             const value = a.textFieldValue(0).trim(), limit = Number(value);

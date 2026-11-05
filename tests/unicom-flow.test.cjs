@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {migrateSmallCrossDays, smallCrossDayTime, previewHTML, refreshRecords, queryDeadline, reusableHistory, refresh, storage, makeWidget, widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {refreshDiagnostics, migrateSmallCrossDays, smallCrossDayTime, previewHTML, refreshRecords, queryDeadline, reusableHistory, refresh, storage, makeWidget, widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -573,6 +573,10 @@ function distributionFixture() {
   elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'<0.01 MB');
   const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
   fs.writeFileSync(monthlyOutput+'/browse.html',browsingHTML);
+  const reportLogs=Array.from({length:105},(_,index)=>({at:logAt-index,source:'widget-small-month',state:'cache',trace:{runId:'sample-'+index,call:1}}));
+  reportLogs.unshift({at:logAt-11*60000,source:'expired',state:'cache'});
+  const diagnosticText=api.refreshDiagnostics(reportLogs,logAt);
+  assert.equal(JSON.parse(diagnosticText.slice(diagnosticText.indexOf('[\n'))).length,100);assert.ok(!diagnosticText.includes('expired'));
   const logHTML=api.statisticsHTML({...browseReports,refresh:queryReport});
   fs.writeFileSync(monthlyOutput+'/refresh-records.html',logHTML);
   elements.clear();new vm.Script(logHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
@@ -580,12 +584,17 @@ function distributionFixture() {
   assert.equal(elements.get('refresh-longest').textContent,'1320 分钟');assert.equal(elements.get('refresh-rows').children.length,2);
   assert.equal(elements.get('refresh-empty').hidden,true);
   const executionReport=api.refreshRecords(queryHistory,logAt,[
-    {at:logAt-3600000,source:'manual',state:'query',reason:'forced'},
+    {at:logAt-3600000,source:'manual',state:'query',reason:'forced',trace:{runId:'test-run-1',call:1,mainCalls:1,renderCalls:1,entry:'widget',durationMS:8,environment:{widget:true,app:false,family:'small'}}},
     {at:logAt-1800000,source:'widget-small-today',state:'cache'},
     {at:logAt-1000000,source:'connection',state:'failed',requested:true},
     {at:logAt-500000,source:'script',state:'failed',requested:false}]);
   elements.clear();new vm.Script(api.statisticsHTML({...browseReports,refresh:executionReport}).match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('refresh-count').textContent,'2 次');assert.equal(elements.get('refresh-rows').children.length,5);
+  const tracedRow=elements.get('refresh-rows').children.find(row=>row.children[1].textContent==='手动刷新');
+  assert.equal(tracedRow.children[1].children[0].children[0].textContent,'运行信息');
+  assert.ok(tracedRow.children[1].children[0].children[1].textContent.includes('test-run-1'));
+  fs.writeFileSync(monthlyOutput+'/refresh-records-diagnostics.html',api.statisticsHTML({...browseReports,refresh:executionReport}));
+
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='小组件 · 小号 · 今日'&&row.children[2].textContent==='使用缓存 · 未请求联通'&&row.children[3].textContent==='—'));
   assert.ok(elements.get('refresh-rows').children.some(row=>row.children[1].textContent==='手动刷新'&&row.children[2].textContent==='查询成功 · 强制'));
   elements.get('hide-no-request').checked=true;elements.get('hide-no-request').onchange();
@@ -688,7 +697,7 @@ function distributionFixture() {
   const noonVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:NoonDate,Color,Rect,Size,Path,DrawContext,Font});
   // 月模式直接读既有每日用量记录，小时明细清理后仍可显示；不把跨日总量塞进每日柱。
   const monthWidget=noonVisual.renderImage({history:{...cardCross,events:[]},stale:false},true,338,158,'month');
-  assert.ok(monthWidget.includes('>每日用量 · MAX '));assert.ok(!monthWidget.includes('>小时用量</text>'));
+  assert.ok(monthWidget.includes('>每日用量</text>'));assert.ok(!monthWidget.includes('>小时用量</text>'));
   assert.ok(monthWidget.includes('>主卡</text>'));assert.ok(monthWidget.includes('>副卡</text>'));assert.ok(!monthWidget.includes('↻'));
   const day3x=13+(2+0.5)*(312/30), dayWidth=312/30-4.5;
   assert.ok(monthWidget.includes(`x="${day3x-dayWidth/2}" y="${128-29*60/90}" width="${dayWidth}" height="${29*60/90}" fill="#0A94FF"`));
@@ -717,12 +726,13 @@ function distributionFixture() {
   const zeroHours={...emptyHours,events:[{from:new Date(2026,10,4,9,0).getTime(),at:new Date(2026,10,4,9,30).getTime(),mb:0}]};
   const zeroImage=noonVisual.renderImage({history:zeroHours,stale:false},true,338,158,'today');
   assert.ok(zeroImage.includes(hourlyBar(9)+' fill="#8A73FF"'));
-  assert.ok(dayImage.includes('>小时用量 · MAX —</text>'));assert.ok(zeroImage.includes('>小时用量 · MAX 0 MB</text>'));
-  assert.ok(dayImage.includes('>小时用量 · MAX '));assert.ok(dayImage.includes('>主卡</text>'));assert.ok(dayImage.includes('>副卡</text>'));
+  assert.match(dayImage, /<text x="325"[^>]*text-anchor="end"[^>]*>小时用量<\/text>/);
+  assert.ok(dayImage.includes('>MAX —</text>'));assert.ok(zeroImage.includes('>MAX 0 MB</text>'));
+  assert.ok(dayImage.includes('>小时用量</text>'));assert.ok(dayImage.includes('>主卡</text>'));assert.ok(dayImage.includes('>副卡</text>'));
   assert.ok(zeroImage.includes('>主卡</text>'));assert.ok(zeroImage.includes('>副卡</text>'));
   assert.ok(!zeroImage.includes('>未分</text>'));assert.ok(!zeroImage.includes('采样小时'));
   const unknownImage=noonVisual.renderImage({history:{...zeroHours,events:zeroHours.events.map(e=>({...e,mb:10,unknownMB:10}))},stale:false},true,338,158,'today');
-  assert.ok(unknownImage.includes('text-anchor="start"'));assert.ok(unknownImage.includes('>小时用量 · MAX 10 MB</text>'));
+  assert.ok(unknownImage.includes('text-anchor="start"'));assert.ok(unknownImage.includes('>MAX 10 MB</text>'));
   assert.ok(unknownImage.includes('>主卡</text>'));assert.ok(unknownImage.includes('>副卡</text>'));
 
 
@@ -809,7 +819,7 @@ function distributionFixture() {
       lastRequest={url:this.url,method:this.method,headers:this.headers,body:this.body};
       if(apiError)throw new Error('offline'); return dataPayload;}
   }
-  const presented=[], feedback=[];
+  const presented=[], feedback=[];let copiedDiagnostic='';
   let fontSizeInput='24';
   class WebView {
     async loadHTML(html){this.entry={html,updates:[],requestsAtOpen:requestCount,view:this};feedback.push(this.entry);}
@@ -847,7 +857,7 @@ function distributionFixture() {
   }};
   const environment = { UNICOM_FLOW_TEST:true, Timer:{schedule:(ms,repeat,callback)=>setTimeout(callback,0)}, config:{runsInWidget:true,runsInApp:false,widgetFamily:'medium'},
     args:{widgetParameter:'',queryParameters:{}}, importModule:name=>{assert.equal(name,'DmYY');return dependency;},
-    FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, WebView, Data:{fromPNG:()=>({toBase64String:()=> 'FAKE_PREVIEW'})}, module:{filename:'/documents/联通流量.js'},
+    Pasteboard:{copyString:value=>{copiedDiagnostic=value;}}, FileManager, Request, ListWidget, Color, Rect, Size, Path, DrawContext, Alert, WebView, Data:{fromPNG:()=>({toBase64String:()=> 'FAKE_PREVIEW'})}, module:{filename:'/documents/联通流量.js'},
     Font:Object.assign(class extends Font {},Font,{boldSystemFont:size=>({size})}), Device:{screenSize:()=>({width:390,height:844})},
     Script:{name:()=> '联通流量',setWidget:w=>{widget=w;},complete:()=>{completed++;}} };
   // 四个独立脚本环境共用同一历史和短期请求锁，不重复查询联通。
@@ -865,6 +875,9 @@ function distributionFixture() {
   assert.equal(cacheQueries,1);assert.equal(cookieChecks,4);assert.equal(together.filter(r=>!r.fromCache).length,1);
   assert.equal(sharedFiles.has('query-lock'),false);
   const initialExecutions=cacheStore.read('refresh-log');assert.equal(initialExecutions.length,4);
+  assert.equal(new Set(initialExecutions.map(item=>item.trace.runId)).size,4);
+  assert.ok(initialExecutions.every(item=>item.trace.call===1&&item.trace.environment.widget===true));
+
   assert.equal(initialExecutions.filter(item=>item.state==='query').length,1);assert.equal(initialExecutions.filter(item=>item.state==='cache').length,3);
   assert.equal(initialExecutions.filter(item=>item.requested===true).length,1);assert.equal(initialExecutions.filter(item=>item.requested===false).length,3);
   assert.ok(initialExecutions.every(item=>item.source.startsWith('widget-')));
@@ -875,6 +888,8 @@ function distributionFixture() {
   const successAt=together[0].history.data.at, deadline=successAt+30*60000;
   cacheNow=successAt+20*60000;
   const twentyPast=await cacheApis[1].refresh(cacheStore);
+  const secondCall=cacheStore.read('refresh-log').at(-1);
+  assert.equal(secondCall.trace.call,2);assert.ok(initialExecutions.some(item=>item.trace.runId===secondCall.trace.runId));
   assert.equal(twentyPast.fromCache,true);assert.equal(cacheQueries,1);assert.equal(twentyPast.history.data.at,successAt);assert.equal(twentyPast.history.queryTimes.length,1);
   const cachedWidget=cacheApis[1].makeWidget(twentyPast,true);
   assert.equal(cachedWidget.refreshAfterDate.getTime(),deadline); // 10:20读取仍建议10:30，不能变10:50
@@ -934,6 +949,9 @@ function distributionFixture() {
   completed=0;
   const integration = await load.runInNewContext(environment);
   await integration.main(); assert.equal(requestCount,2); assert.equal(completed,1); assert.ok(widget.backgroundImage);
+  const oneMainLog=JSON.parse(files.get('/documents/UnicomFlow/refresh-log.json')).at(-1);
+  assert.equal(oneMainLog.trace.mainCalls,1);assert.equal(oneMainLog.trace.renderCalls,1);assert.equal(oneMainLog.trace.call,1);assert.equal(oneMainLog.trace.entry,'widget');
+
   // 与成功抓包相同的接口主机与表单体。
   assert.equal(new URL(lastRequest.url).host,'mxx.client.10010.com');
   assert.equal(lastRequest.method,'POST');
@@ -1023,6 +1041,12 @@ function distributionFixture() {
   await recordMenu.onClick();
   assert.equal(requestCount,beforeRecordsRequest);assert.deepEqual(files,beforeRecordsFiles);
   const recordsView=feedback.at(-1).view, beforeClearFile=files.get('/documents/UnicomFlow/history.json'), beforeClearRequests=requestCount;
+  const beforeDiagnosticFiles=new Map(files);
+  assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://copy-refresh-diagnostics'}),false);
+  assert.ok(copiedDiagnostic.includes('联通流量执行诊断'));assert.ok(copiedDiagnostic.includes('runId'));
+  assert.ok(!copiedDiagnostic.includes('FAKE_TEST_ONLY'));assert.ok(!copiedDiagnostic.includes('JSESSIONID'));
+  assert.equal(requestCount,beforeClearRequests);assert.deepEqual(files,beforeDiagnosticFiles);
+
   assert.equal(recordsView.shouldAllowRequest({url:'https://example.com'}),true);
   alertChoices.push(-1);assert.equal(recordsView.shouldAllowRequest({url:'unicomflow://clear-refresh-records'}),false);
   await new Promise(resolve=>setImmediate(resolve));assert.equal(files.get('/documents/UnicomFlow/history.json'),beforeClearFile);

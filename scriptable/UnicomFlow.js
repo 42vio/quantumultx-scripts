@@ -22,6 +22,8 @@ iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或�
 // 仅供仍检查版本号的旧客户端迁移；本脚本同步功能不再使用此标识。
 const UF_VERSION = '1.0.8';
 const UF_UPDATE_URL = 'https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scriptable/UnicomFlow.js';
+const UF_RUN = { id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+  startedAt: Date.now(), mainCalls: 0, renderCalls: 0, refreshCalls: 0, entry: 'unknown' };
 
 const UF = {
   boxjs: 'http://boxjs.net',
@@ -677,6 +679,15 @@ function refreshRecords(history, at = Date.now(), executions = []) {
     longest: intervals.length ? Math.max(...intervals) : null };
 }
 
+function refreshDiagnostics(executions, at = Date.now()) {
+  const entries = executions.filter(entry => Number.isFinite(entry.at) && entry.at <= at && entry.at >= at - 10 * 60000).slice(-100);
+  return '联通流量执行诊断（最近10分钟，最多100条）\n'
+    + '运行编号不同：独立脚本运行；编号相同且加载序号递增：同次运行多次加载。\n'
+    + '运行环境标记不能判断是桌面重绘、预览还是系统重复调度。\n'
+    + JSON.stringify(entries.map(entry => ({ at: entry.at, source: entry.source, state: entry.state,
+      requested: entry.requested, reason: entry.reason, dataAt: entry.dataAt, trace: entry.trace })), null, 2);
+}
+
 function statisticsReports(history, at = Date.now(), executions = []) {
   // 只在打开页面时生成可选日期／月份的数据，不写入历史或复制保存每日累计。
   const hours = hourlyReport(history, at), month = monthlyReport(history, at), year = yearlyReport(history, at);
@@ -726,13 +737,13 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
   .records-details>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 18px 18px;list-style:none;font-size:15px;font-weight:600}.records-details>summary::-webkit-details-marker{display:none}.records-details>summary .hint{margin-left:auto;font-weight:400}.records-details>summary::after{content:"›";font-size:22px;color:var(--muted);transform:rotate(90deg)}.records-details[open]>summary::after{transform:rotate(-90deg)}
   .hero .totals{margin-top:10px;gap:8px}.hero .mini{padding:8px 10px}.hero .mini strong{font-size:18px;margin-top:3px}.hero .coverage{line-height:1.4}.hero .range-note{margin-top:6px}.badge:not(.cached){display:none}
-  .refresh-filter{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 18px 10px;font-size:12px;color:var(--muted)}.refresh-filter input{width:17px;height:17px;margin:0;accent-color:var(--blue)}
+  .refresh-tools{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 10px;padding:0 18px 10px}.refresh-filter{display:flex;align-items:center;gap:8px;min-height:44px;font-size:12px;color:var(--muted)}.refresh-filter input{width:17px;height:17px;margin:0;accent-color:var(--blue)}.run-info{margin-top:5px}.run-info summary{font-size:11px;color:var(--blue)}.run-info div{white-space:pre-line;overflow-wrap:anywhere;max-width:240px;font-size:11px;line-height:1.7;margin-top:6px}
   .header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.records-link{border:0;border-radius:12px;background:var(--soft);color:var(--blue);min-height:44px;padding:0 12px;white-space:nowrap;font-size:13px;font-weight:500}header{gap:12px}.refresh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.refresh-summary .mini{padding:11px 8px;min-width:0}.refresh-summary strong{font-size:clamp(12px,3.6vw,17px);white-space:nowrap;line-height:1.3;margin-top:7px}.refresh-scope{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.refresh-scope summary{font-size:11px;color:var(--muted);min-height:28px}.refresh-table{min-width:480px}.refresh-table th,.refresh-table td{padding:13px 14px}.refresh-table time{font-size:13px}.refresh-table td:first-child{padding-left:18px}.refresh-note{font-size:12px;line-height:1.8;color:var(--muted);margin:12px 0 0}.empty-records{text-align:center;padding:28px 18px;color:var(--muted);font-size:13px}
   </style></head><body><main class="shell">
   <header><div><h1 id="page-title">用量统计</h1><div class="eyebrow" id="page-subtitle">采样记录 · 非运营商账单</div></div><div class="header-actions"><button id="refresh-records-toggle" class="records-link" type="button" aria-expanded="false" aria-controls="refresh-records">刷新记录</button><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></div></header>
   <section id="refresh-records" hidden aria-label="刷新记录">
     <section class="card"><div class="card-head"><h2>最近24小时</h2></div><div class="refresh-summary"><div class="mini"><div class="mini-label">查询成功</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><details class="refresh-scope"><summary>统计说明</summary><p>间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔可连接到24小时外的上一条成功记录。使用缓存与执行失败不计入成功次数和查询间隔。</p></details></section>
-    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><label class="refresh-filter"><input id="hide-no-request" type="checkbox">隐藏未请求联通的记录</label><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
+    <section class="card table-card"><div class="card-head"><h2>执行记录</h2><button id="clear-refresh-records" class="records-link" type="button" style="color:#FF3B30">清除记录</button></div><div class="refresh-tools"><label class="refresh-filter"><input id="hide-no-request" type="checkbox">隐藏未请求联通的记录</label><button id="copy-refresh-diagnostics" class="records-link" type="button">复制诊断</button></div><div class="scroll"><table class="refresh-table"><thead><tr><th>触发时间</th><th>来源</th><th>执行结果</th><th>查询间隔</th></tr></thead><tbody id="refresh-rows"></tbody></table></div><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无执行记录</div></section>
     <p class="refresh-note" id="refresh-execution-summary"></p><p class="refresh-note">来源及执行结果从新版开始记录，旧成功记录标为来源未知。命中缓存表示脚本执行但未请求联通，不代表iOS是否重绘。日志最多保留7天、2000条，不保存Cookie或接口原文；切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
@@ -816,6 +827,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     const executionRows=queryLog.entries||queryLog.rows;
     el('refresh-execution-summary').textContent='实际查询成功 '+queryLog.count+' 次 · 使用缓存 '+(queryLog.cached||0)+' 次 · 执行失败 '+(queryLog.failed||0)+' 次。上方平均与最长间隔仅计算成功查询。';
     el('clear-refresh-records').onclick=()=>{location.href='unicomflow://clear-refresh-records';};
+    el('copy-refresh-diagnostics').onclick=()=>{location.href='unicomflow://copy-refresh-diagnostics';};
     const sourceName=source=>source&&source.startsWith('widget-')?'小组件 · '+(source.includes('-small-')?'小号':'中号')+' · '+(source.endsWith('-today')?'今日':'当月')
       :({script:'运行脚本',preview:'组件预览',statistics:'用量统计',manual:'手动刷新',connection:'连接检查',diagnostics:'成员检查'})[source]||'来源未知';
     const renderExecutions=()=>{
@@ -826,6 +838,16 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRef
     for(const item of visibleRows){
       const row=document.createElement('tr'),time=document.createElement('td'),source=document.createElement('td'),status=document.createElement('td'),gap=document.createElement('td');
       time.textContent=clock(item.at,true);source.textContent=sourceName(item.source);
+      if(item.trace){
+        const info=document.createElement('details'),summary=document.createElement('summary'),description=document.createElement('div');
+        info.className='run-info';summary.textContent='运行信息';
+        const trace=item.trace,env=trace.environment||{};
+        description.textContent=['运行编号：'+trace.runId,'本次运行第 '+trace.call+' 次加载','入口：'+trace.entry,
+          '主入口 / 渲染次数：'+trace.mainCalls+' / '+trace.renderCalls,
+          '环境：组件 '+!!env.widget+'，App '+!!env.app+'，Siri '+!!env.siri+'，主屏幕快捷图标 '+!!env.homeScreen,
+          '环境尺寸：'+(env.family||'未提供'),'加载耗时：'+trace.durationMS+' ms'].join('\\n');
+        info.append(summary,description);source.append(info);
+      }
       status.textContent=item.state==='cache'?'使用缓存 · 未请求联通':item.state==='failed'?(item.requested===false?'执行失败 · 未请求联通':item.requested===true?'查询失败':'执行失败 · 请求状态未知'):item.reason==='forced'?'查询成功 · 强制':item.reason==='midnight'?'查询成功 · 跨日':item.reason==='no-cache'?'查询成功 · 无缓存':'查询成功';
       gap.textContent=item.state==='cache'||item.state==='failed'?'—':duration(item.interval);
       row.append(time,source,status,gap);el('refresh-rows').append(row);
@@ -991,9 +1013,18 @@ function pauseQuery(ms) {
 
 async function refresh(store, force = false, source = 'script') {
   let requested = false;
+  const call = ++UF_RUN.refreshCalls, startedAt = Date.now();
   const saveExecution = (state, result) => {
     const now = Date.now(), dataAt = result && result.history.data.at;
     const entry = { at: state === 'query' ? dataAt : now, source, state, forced: force, requested,
+      trace: { runId: UF_RUN.id, runStartedAt: UF_RUN.startedAt, call, mainCalls: UF_RUN.mainCalls,
+        renderCalls: UF_RUN.renderCalls, entry: UF_RUN.entry, startedAt, durationMS: Math.max(0, now - startedAt),
+        environment: typeof config === 'undefined' ? {} : {
+          app: config.runsInApp === true, widget: config.runsInWidget === true,
+          homeScreen: config.runsFromHomeScreen === true, siri: config.runsWithSiri === true,
+          accessory: config.runsInAccessoryWidget === true,
+          family: ['small', 'medium', 'large', 'extraLarge'].includes(config.widgetFamily) ? config.widgetFamily : null,
+        } },
       ...(result && result.reason ? { reason: result.reason } : {}),
       ...(Number.isFinite(dataAt) ? { dataAt } : {}) };
     // 独立轻量日志，缓存命中不重写整份流量历史；限制保留时间与条数。
@@ -1182,8 +1213,9 @@ function renderImage(result, medium, width, height, mode = 'month') {
     const minimumBar = 1.5;
     const peakLabel = visibleBuckets.some(bucket => bucket.samples)
       ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
-    text(ctx, `${today ? '小时用量' : '每日用量'} · MAX ${peakLabel}`,
-      chartX, 84 - chartLift, chartW, 12, 8, UF.muted);
+    text(ctx, `MAX ${peakLabel}`, chartX, 84 - chartLift, chartW - 60, 12, 8, UF.muted);
+    text(ctx, today ? '小时用量' : '每日用量',
+      chartX + chartW - 60, 84 - chartLift, 60, 12, 8, UF.muted, false, 'right');
     buckets.forEach((bucket, slot) => {
       const center = chartX + (slot + 0.5) * cell;
       const barWidth = Math.max(1, cell - 4.5);
@@ -1403,6 +1435,7 @@ function createWidgetClass(DmYY) {
     }
 
     async render() {
+      UF_RUN.renderCalls++;
       if (!['small', 'medium'].includes(this.widgetFamily)) return errorWidget('请添加小号或中号组件');
       await this.loadResult();
       return this.result ? makeWidget(this.result, this.widgetFamily === 'medium', this.flowMode) : errorWidget(this.failure, this.widgetFamily === 'medium');
@@ -1480,6 +1513,13 @@ function createWidgetClass(DmYY) {
       let clearing = false;
       const stale = this.result.stale;
       view.shouldAllowRequest = request => {
+        if (request.url === 'unicomflow://copy-refresh-diagnostics') {
+          try {
+            Pasteboard.copyString(refreshDiagnostics(this.store.read('refresh-log', [])));
+            alertMessage('已复制诊断', '点击一次小组件后，稍等几秒，再将这里复制的诊断内容发来分析。');
+          } catch (_) { alertMessage('复制未完成', '请重新点击复制诊断'); }
+          return false;
+        }
         if (request.url !== 'unicomflow://clear-refresh-records') return true;
         if (!clearing) {
           clearing = true;
@@ -1724,6 +1764,8 @@ function createWidgetClass(DmYY) {
 }
 
 async function main() {
+  UF_RUN.mainCalls++;
+  UF_RUN.entry = config.runsInWidget ? 'widget' : config.runsInApp ? 'app' : 'other';
   let dependency;
   try { dependency = importModule('DmYY'); }
   catch (_) {

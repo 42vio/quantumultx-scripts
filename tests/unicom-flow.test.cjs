@@ -41,10 +41,22 @@ function distributionFixture() {
   assert.equal(changedQuery.queryTimes.length,1); // 换号隔离
   const legacyLog={...queryHistory};delete legacyLog.queryTimes;
   const migratedLog=updateHistory(legacyLog,logSample(logAt));
-  assert.deepEqual(Array.from(migratedLog.queryTimes),[logAt-3600000,logAt]); // 不从旧用量区间补造请求
+  assert.deepEqual(Array.from(migratedLog.queryTimes),[logAt-25*3600000,logAt-23*3600000,logAt-3600000,logAt]); // 复用旧区间实际采样时间
   assert.equal(api.refreshRecords({data:{at:logAt-8*86400000},events:[{at:logAt}]},logAt).count,0);
   assert.equal(api.refreshRecords({data:{at:logAt},queryTimes:[logAt,logAt+1,NaN]},logAt).count,1);
   assert.equal(api.refreshRecords({data:{at:logAt}},logAt).average,null);
+  const oldRefresh={data:{at:logAt},last:{at:logAt},events:[
+    {from:logAt-7200000,at:logAt-3600000,mb:0},
+    {from:logAt-3600000,at:logAt,mb:1},
+    {from:logAt+1,at:logAt+2}, {from:logAt,at:logAt-1}],
+    months:{'2026-11':{days:{},crossDay:[{from:logAt-13*3600000,at:logAt-11*3600000,mb:0,mainMB:0,viceMB:0,unknownMB:0}]}}};
+  const oldRefreshReport=api.refreshRecords(oldRefresh,logAt);
+  assert.equal(oldRefreshReport.count,5); // 读取旧数据即可显示，不必等待新查询
+  assert.equal(oldRefreshReport.rows[0].interval,3600000);
+  const recoveredRefresh=updateHistory({...oldRefresh,version:1,cardHistoryVersion:1,session:'query-log-test',last:null},logSample(logAt+1));
+  assert.equal(recoveredRefresh.queryTimes.length,6); // 新查询持久保留恢复的时间
+  assert.equal(api.refreshRecords({...oldRefresh,queryTimes:[logAt,logAt-3600000]},logAt).count,5); // 去重
+
 
   const cardFixture=distributionFixture();
   cardFixture.viceCardLits=[{number:'13000000001',role:'main'}, {number:'13000000002',role:'vice'}];
@@ -891,7 +903,7 @@ function distributionFixture() {
   assert.ok(!menus.some(item=>item.name==='flowMembers' || item.title==='主副卡用量'));
   assert.equal(typeof instance.showMembers,'undefined');
   assert.deepEqual(instance._menuActions.map(group=>group.title),['预览组件','组件配置','用量与数据','维护']);
-  assert.equal(menus.length,11);assert.equal(instance._menuActions[0].menu[0].name,'flowPreview');
+  assert.equal(menus.length,12);assert.equal(instance._menuActions[0].menu[0].name,'flowPreview');
   assert.equal(instance._menuActions[1].menu[0].name,'flowUpdate');
   assert.ok(!menus.some(item=>['套餐分类','账户说明','BoxJS 域名','连接检查','成员字段检查'].includes(item.title)));
   const beforeSubmenus=requestCount, advanced=await instance.advancedSettings();
@@ -916,10 +928,16 @@ function distributionFixture() {
   assert.equal(files.get('/documents/UnicomFlow/history.json'),successfulBeforeFailure);apiError=false;
   const beforeStatistics=requestCount;await instance.showUsageStatistics();assert.equal(requestCount,beforeStatistics+1);
   assert.ok(feedback.at(-1).html.includes('tab-hours'));assert.ok(feedback.at(-1).html.includes('tab-year'));
+  const recordMenu=menus.find(item=>item.name==='flowRefreshRecords');assert.equal(recordMenu.title,'刷新记录');
+  await recordMenu.onClick();
+  elements.clear();new vm.Script(feedback.at(-1).html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('page-title').textContent,'刷新记录');assert.equal(elements.get('usage-content').hidden,true);
+  elements.get('refresh-records-toggle').onclick();assert.equal(elements.get('page-title').textContent,'用量统计');
+
   apiError=true;await instance.showUsageStatistics();assert.ok(feedback.at(-1).html.includes('缓存数据'));apiError=false;
 
   const configPage=await instance.renderAppView([{title:'预览组件',menu:[{name:'small'},{name:'medium'}]},...instance._menuActions]);
-  assert.equal(configPage.options.flatMap(group=>group.menu).length,11);
+  assert.equal(configPage.options.flatMap(group=>group.menu).length,12);
   assert.equal(configPage.options.filter(group=>group.title==='预览组件').length,1);
   assert.equal(configPage.avatar,false);
   assert.ok(configPage.page.html.includes('配置内容'));

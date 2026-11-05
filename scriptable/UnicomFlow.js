@@ -598,10 +598,18 @@ function hourlyReport(history, at = Date.now(), selectedDay = dayKey(at)) {
     crossDay, unallocatedMB: crossDay.reduce((sum, e) => sum + e.mb, 0), lastSuccess: history.data.at };
 }
 
-// 只记录成功查询时间，不从用量区间反推请求日志。
-function refreshRecords(history, at = Date.now()) {
-  const times = [...new Set([...(history.queryTimes || []), history.data && history.data.at])]
+// 区间两端是实际成功采样时间；复用旧记录，不按小时或每日汇总推算请求。
+function successfulQueryTimes(history, at) {
+  const events = [...(history.events || []), ...Object.values(history.months || {}).flatMap(month => month.crossDay || [])];
+  const endpoints = events.filter(event => Number.isFinite(event.from) && Number.isFinite(event.at)
+    && event.from < event.at && event.at <= at).flatMap(event => [event.from, event.at]);
+  return [...new Set([...(history.queryTimes || []), ...endpoints,
+    history.last && history.last.at, history.data && history.data.at])]
     .filter(time => Number.isFinite(time) && time <= at && time >= at - 7 * 86400000).sort((a, b) => a - b);
+}
+
+function refreshRecords(history, at = Date.now()) {
+  const times = successfulQueryTimes(history, at);
   const rows = times.map((time, index) => ({ at: time, interval: index ? time - times[index - 1] : null }))
     .filter(row => row.at >= at - 86400000);
   const intervals = rows.map(row => row.interval).filter(value => value != null);
@@ -640,7 +648,7 @@ function previewHTML(images, sizes, mode = 'month', stale = false) {
   })();</script></body></html>`;
 }
 
-function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
+function statisticsHTML(reports, stale = false, initialPeriod = 'hours', showRefresh = false) {
   const payload = JSON.stringify(reports).replace(/</g, '\\u003c');
   const light = parseInt(UF.bg.slice(0, 2), 16) * 0.299 + parseInt(UF.bg.slice(2, 4), 16) * 0.587 + parseInt(UF.bg.slice(4, 6), 16) * 0.114 > 150;
   const surface = light ? 'FFFFFF' : '242426', page = light ? 'F3F5F9' : '151517';
@@ -663,7 +671,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
   <section id="refresh-records" hidden aria-label="刷新记录">
     <section class="card"><div class="card-head"><h2>最近24小时</h2><span class="hint">成功查询</span></div><div class="refresh-summary"><div class="mini"><div class="mini-label">请求次数</div><strong id="refresh-count"></strong></div><div class="mini"><div class="mini-label">平均间隔</div><strong id="refresh-average"></strong></div><div class="mini"><div class="mini-label">最长间隔</div><strong id="refresh-longest"></strong></div></div><p class="refresh-note">间隔按相邻两次成功查询计算，包含手动刷新；平均与最长间隔包含上一条位于24小时外的记录（如有）。</p></section>
     <section class="card table-card"><div class="card-head"><h2>请求时间</h2><span class="hint">最新在前</span></div><table class="refresh-table"><thead><tr><th>成功时间</th><th>距上次成功</th></tr></thead><tbody id="refresh-rows"></tbody></table><div id="refresh-empty" class="empty-records" hidden>最近24小时暂无成功查询</div></section>
-    <p class="refresh-note">只记录成功获取联通数据的时间，读取缓存及失败请求不计入。仅保存最近7天的时间戳，不保存接口原文；升级前仅保留最后一次成功时间，不补造历史记录。页面展示打开时的快照，切换页面不会发起请求。</p>
+    <p class="refresh-note">只记录成功获取联通数据的时间，读取缓存及失败请求不计入。仅保存最近7天的时间戳，不保存接口原文；升级前的记录复用已有采样区间起止时间，缺失记录无法补齐。页面展示打开时的快照，切换页面不会发起请求。</p>
   </section>
   <div id="usage-content">
   <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">单日</button><button class="tab" id="tab-month" type="button">单月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
@@ -756,6 +764,7 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
     el('period-prev').onclick=()=>changePeriod(-1);el('period-next').onclick=()=>changePeriod(1);
     el('period-select').onchange=()=>{const key=el('period-select').value;if(current!=='year'&&periodChoices(current).includes(key)){selections[current]=key;render(current);}};
     Object.keys(modes).forEach(key=>el('tab-'+key).onclick=()=>render(key));render(Object.hasOwn(modes,initial)&&reports[initial]?initial:reports.hours?'hours':'month');
+    if(${showRefresh === true})el('refresh-records-toggle').onclick();
   })();</script></body></html>`;
 }
 
@@ -786,7 +795,7 @@ function updateHistory(previous, sample) {
   } else if (prev) { events = []; note = '套餐或月份变化，重新积累'; }
   const months = updateMonths(old.months, sample, prev, interval, note);
   return { version: 1, cardHistoryVersion: 1, session: sample.session, events, months, note,
-    queryTimes: [...new Set([...(old.queryTimes || []), old.data && old.data.at, sample.at])]
+    queryTimes: [...new Set([...successfulQueryTimes(old, sample.at), sample.at])]
       .filter(time => Number.isFinite(time) && time <= sample.at && time >= sample.at - 7 * 86400000).sort((a, b) => a - b),
     last: { at: sample.at, signature, packages: sample.packages, members: (sample.members || []).map(m => ({ id: m.id, role: m.role, roleConflict: m.roleConflict })) }, data: sample };
 }
@@ -1327,11 +1336,11 @@ function createWidgetClass(DmYY) {
       await alertMessage(this.failure ? '刷新未完成' : '刷新完成', this.failure || '已读取 QX 保存的 Cookie 并查询最新流量数据，共享记录已更新。桌面组件的重绘时间由 iOS 决定。');
     }
 
-    async showUsageStatistics() {
+    async showUsageStatistics(showRefresh = false) {
       await this.loadResult();
       if (!this.result) return alertMessage('用量统计', this.failure || '请先成功查询一次套餐');
       const view = new WebView();
-      await view.loadHTML(statisticsHTML(statisticsReports(this.result.history), this.result.stale));
+      await view.loadHTML(statisticsHTML(statisticsReports(this.result.history), this.result.stale, 'hours', showRefresh));
       await view.present();
     }
 
@@ -1455,6 +1464,7 @@ function createWidgetClass(DmYY) {
       ] });
       this.registerAction({ title: '用量与数据', menu: [
         action('flowStatistics', '用量统计', 'chart.bar.xaxis', '#8A73FF', () => this.showUsageStatistics()),
+        action('flowRefreshRecords', '刷新记录', 'clock.arrow.circlepath', '#007AFF', () => this.showUsageStatistics(true)),
         action('flowProxy', '立即刷新数据', 'arrow.clockwise', '#34C759', () => this.refreshFromQX()),
       ] });
       this.registerAction({ title: '维护', menu: [

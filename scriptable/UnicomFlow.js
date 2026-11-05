@@ -518,8 +518,10 @@ function usageSummary(records) {
   }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
 }
 
-function monthlyReport(history, at = Date.now()) {
-  const date = new Date(at), month = dayKey(at).slice(0, 7), today = dayKey(at);
+function monthlyReport(history, at = Date.now(), selectedMonth = dayKey(at).slice(0, 7)) {
+  const today = dayKey(at), currentMonth = today.slice(0, 7);
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth) && selectedMonth <= currentMonth ? selectedMonth : currentMonth;
+  const date = new Date(Number(month.slice(0,4)), Number(month.slice(5))-1, 1);
   const savedMonths = history.months || {};
   const saved = savedMonths[month] || { days: {}, crossDay: [] };
   const count = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -569,8 +571,10 @@ function yearlyReport(history, at = Date.now()) {
     crossDay: [], unallocatedMB: 0, lastSuccess: history.data.at };
 }
 
-function hourlyReport(history, at = Date.now()) {
-  const date = dayKey(at), hour = new Date(at).getHours();
+function hourlyReport(history, at = Date.now(), selectedDay = dayKey(at)) {
+  const actualToday = dayKey(at), parsed = new Date(selectedDay + 'T00:00:00');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(selectedDay) && Number.isFinite(parsed.getTime()) && dayKey(parsed) === selectedDay && selectedDay <= actualToday ? selectedDay : actualToday;
+  const hour = date === actualToday ? new Date(at).getHours() : 23;
   const days = Array.from({ length: 24 }, (_, index) => {
     const events = (history.events || []).filter(e => dayKey(e.from) === date && dayKey(e.at) === date && new Date(e.at).getHours() === index && e.at <= at);
     const parts = events.reduce((sum, e) => { sum.mb += e.mb; for (const [key, value] of Object.entries(eventParts(e))) sum[key] += value; return sum; }, { mb: 0, mainMB: 0, viceMB: 0, unknownMB: 0 });
@@ -589,10 +593,23 @@ function hourlyReport(history, at = Date.now()) {
 }
 
 function statisticsReports(history, at = Date.now()) {
-  return { hours: hourlyReport(history, at), month: monthlyReport(history, at), year: yearlyReport(history, at) };
+  // 只在打开页面时生成可选日期／月份的数据，不写入历史或复制保存每日累计。
+  const hours = hourlyReport(history, at), month = monthlyReport(history, at), year = yearlyReport(history, at);
+  const earliest = new Date(at); earliest.setHours(0,0,0,0); earliest.setDate(earliest.getDate()-6);
+  const dates = {};
+  const available = [...new Set((history.events || []).filter(e => Number.isFinite(e.from) && Number.isFinite(e.at)
+    && e.from < e.at && e.at <= at && dayKey(e.from) === dayKey(e.at) && e.at >= earliest.getTime()).map(e => dayKey(e.at)))].sort();
+  if (available.length) for (const cursor = new Date(available[0] + 'T00:00:00'); dayKey(cursor) < hours.month; cursor.setDate(cursor.getDate()+1)) {
+    const key = dayKey(cursor); dates[key] = hourlyReport(history, at, key);
+  }
+  const months = {};
+  for (const key of Object.keys(history.months || {}).sort()) {
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(key) && key >= year.days[0].key && key < month.month) months[key] = monthlyReport(history, at, key);
+  }
+  return { hours, month, year, dates, months };
 }
 
-function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
+function statisticsHTML(reports, stale = false, initialPeriod = 'hours') {
   const payload = JSON.stringify(reports).replace(/</g, '\\u003c');
   const light = parseInt(UF.bg.slice(0, 2), 16) * 0.299 + parseInt(UF.bg.slice(2, 4), 16) * 0.587 + parseInt(UF.bg.slice(4, 6), 16) * 0.114 > 150;
   const surface = light ? 'FFFFFF' : '242426', page = light ? 'F3F5F9' : '151517';
@@ -601,7 +618,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   :root{color-scheme:${light ? 'light' : 'dark'};--text:#${UF.text};--muted:#${UF.muted};--blue:#${UF.blue};--purple:#${UF.purple};--warning:#${UF.warning};--line:#${border};--surface:#${surface};--soft:#${soft}}
   *{box-sizing:border-box;touch-action:manipulation}body{margin:0;background:#${page};color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;-webkit-text-size-adjust:100%}button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
   .shell{max-width:760px;margin:auto;padding:56px 18px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}h1{font-size:26px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}.eyebrow{font-size:12px;color:var(--muted)}.badge{font-size:11px;white-space:nowrap;padding:7px 10px;border-radius:20px;background:var(--soft);color:var(--muted)}.cached{color:var(--warning)}
-  .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:20px}.tab{border:0;background:transparent;padding:10px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
+  .tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:4px;background:var(--soft);border-radius:14px;gap:4px;margin-bottom:14px}.tab{border:0;background:transparent;padding:10px 4px;border-radius:10px;color:var(--muted);font-size:13px;font-weight:500}.tab.active{background:var(--surface);color:var(--text);box-shadow:0 2px 8px #0000000c}
+  .period-picker{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:8px;margin-bottom:18px}.period-picker button{height:44px;border:0;border-radius:12px;background:var(--soft);font-size:22px}.period-picker button:disabled{opacity:.3}.period-picker select{width:100%;min-width:0;height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;color:var(--text);background:var(--surface);font:500 16px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center}.period-picker select:disabled{opacity:1}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;min-width:0}.hero{padding:22px 20px}.period-label{font-size:13px;color:var(--muted)}.total{margin:10px 0 12px;font-variant-numeric:tabular-nums;letter-spacing:-1.5px;font-size:42px;font-weight:500;line-height:1.1}.total small{font-size:17px;letter-spacing:0;color:var(--muted);font-weight:400;margin-left:7px}.coverage{font-size:12px;color:var(--muted);line-height:1.6}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.mini{padding:12px 13px;border-radius:13px;background:var(--soft)}.mini-label{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}.mini strong{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:6px}.main{color:var(--blue)}.vice{color:var(--purple)}.unconfirmed{font-size:12px;margin-top:12px;color:var(--warning)}
   h2{font-size:15px;font-weight:600;margin:0}.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:11px;color:var(--muted)}.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--muted);margin:15px 0 8px}.legend span{display:inline-flex;align-items:center;gap:5px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0}.blue{background:var(--blue)}.purple{background:var(--purple)}.amber{background:var(--warning)}.gray{background:#${UF.track}}
   .scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.chart{display:flex;align-items:stretch;gap:5px;height:180px;padding:8px 3px 3px;background:repeating-linear-gradient(to bottom,var(--line) 0,var(--line) 1px,transparent 1px,transparent 70px);background-size:100% 141px;background-position:0 10px;background-repeat:no-repeat}.bar{flex:1;min-width:14px;padding:0 1px;border:0;background:transparent;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;gap:9px}.fill{display:flex;flex-direction:column-reverse;overflow:hidden;width:100%;border-radius:4px 4px 1px 1px;background:var(--purple)}.fill.missing{background:#${UF.track}}.fill.future{background:transparent}.segment{display:block;width:100%;flex-shrink:0}.tick{height:18px;min-width:18px;padding:2px 4px;line-height:14px;border-radius:6px;font-size:10px;color:var(--muted);white-space:nowrap}.bar.selected .tick{background:var(--blue);color:#fff;font-weight:600}.chart-foot{margin-top:10px;line-height:1.6;font-size:11px;color:var(--muted)}
@@ -610,7 +628,8 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   details{color:var(--muted);font-size:12px;line-height:1.8}summary{cursor:pointer;color:var(--text);font-size:13px;font-weight:500}details p{margin:10px 0 0}.cross-event{padding:10px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.7;white-space:pre-line}footer{white-space:pre-line;color:var(--muted);font-size:11px;line-height:1.8;text-align:center;margin-top:20px}.range-note{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
   </style></head><body><main class="shell">
   <header><div><h1>用量统计</h1><div class="eyebrow">采样记录 · 非运营商账单</div></div><span class="badge${stale ? ' cached' : ''}">${stale ? '缓存数据' : '本地记录'}</span></header>
-  <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">今日</button><button class="tab" id="tab-month" type="button">本月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
+  <nav class="tabs" aria-label="统计周期"><button class="tab" id="tab-hours" type="button">单日</button><button class="tab" id="tab-month" type="button">单月</button><button class="tab" id="tab-year" type="button">月度趋势</button></nav>
+  <div class="period-picker" id="period-picker"><button id="period-prev" type="button" aria-label="前一个周期">‹</button><select id="period-select" aria-label="选择日期"></select><button id="period-next" type="button" aria-label="后一个周期">›</button></div>
   <section class="card hero"><div class="period-label" id="period-label"></div><div class="total" id="total"></div><div class="coverage" id="coverage"></div><div id="cross-hint" class="range-note" hidden></div><div class="totals"><div class="mini"><div class="mini-label"><i class="dot blue"></i><span id="main-label">主卡</span></div><strong id="main-total" class="main"></strong></div><div class="mini"><div class="mini-label"><i class="dot purple"></i><span id="vice-label">副卡</span></div><strong id="vice-total" class="vice"></strong></div></div><div id="unknown-total" class="unconfirmed" hidden></div></section>
   <section class="card"><div class="card-head"><h2 id="chart-title"></h2><span id="chart-count" class="hint"></span></div><div class="legend"><span><i class="dot blue"></i>主卡</span><span><i class="dot purple"></i>副卡</span><span id="unknown-legend"><i class="dot amber"></i>未确认</span><span><i class="dot gray"></i>无数据</span></div><div class="scroll"><div id="chart" class="chart"></div></div><div id="chart-foot" class="chart-foot"></div></section>
   <section class="card"><div class="selected-heading"><h2 id="selected"></h2><span id="selected-total" class="selected-value"></span></div><div class="selected-cards"><span id="selected-main" class="main"></span><span id="selected-vice" class="vice"></span><span id="selected-unknown" class="unconfirmed"></span></div><div id="detail" class="detail"></div><p id="selected-note" class="status-note"></p></section>
@@ -620,12 +639,28 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
   <footer id="updated"></footer></main><script>
   (()=>{
     const reports=${payload}, initial=${JSON.stringify(initialPeriod)};
-    const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'今日小时分布',width:500},month:{label:'日期',title:'本月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:0}};
+    const el=id=>document.getElementById(id), modes={hours:{label:'时段',title:'单日小时分布',width:500},month:{label:'日期',title:'单月每日分布',width:600},year:{label:'月份',title:'近12个月用量',width:0}};
     const amount=value=>{if(value==null)return '—';const displayed=value>=1024?value/1024:value;return value===0?'0 MB':(displayed<0.01?'<0.01':displayed.toFixed(2))+(value>=1024?' GB':' MB');};
     const totalFor=(report,key)=>report.period==='months'?report.average[key]:report.summary?report.summary[key]:report.days.some(d=>d.mb!=null)?report.days.reduce((sum,d)=>sum+(d[key]||0),0):null;
     const clock=(time,full)=>time==null?'无':full?new Date(time).toLocaleString('zh-CN',{hour12:false}):new Date(time).toLocaleTimeString('zh-CN',{hour12:false});
     const status=d=>current==='year'&&d.mb!=null?(d.key===report.month?'本月进行中':d.partial?'部分记录':'已结束'):d.future?'未到时间':d.mb==null?(d.first!=null?'仅基线':d.notes.length?'有缺口':'无采样'):d.notes.length?'有缺口':'采样区间';
-    let current='month', report=reports.month;
+    const selections={hours:reports.hours&&reports.hours.month,month:reports.month&&reports.month.month};
+    let current='hours', report=reports.hours||reports.month;
+    function periodChoices(key){return key==='hours'?[...Object.keys(reports.dates||{}),reports.hours.month].sort():[...Object.keys(reports.months||{}),reports.month.month].sort();}
+    function selectedReport(key){return key==='year'?reports.year:key==='hours'?(reports.dates||{})[selections.hours]||reports.hours:(reports.months||{})[selections.month]||reports.month;}
+    function changePeriod(offset){
+      if(current==='year')return;
+      const choices=periodChoices(current), index=choices.indexOf(selections[current]), next=index+offset;
+      if(next<0||next>=choices.length)return;selections[current]=choices[next];render(current);
+    }
+    function renderPicker(key){
+      el('period-picker').hidden=key==='year';if(key==='year')return;
+      const choices=periodChoices(key), select=el('period-select');select.replaceChildren();
+      for(const value of choices){const option=document.createElement('option');option.value=value;option.textContent=value+(key==='hours'&&value===reports.hours.month?' · 今天':key==='month'&&value===reports.month.month?' · 本月':'');select.append(option);}
+      select.value=selections[key];select.disabled=choices.length===1;select.setAttribute('aria-label',key==='hours'?'选择日期':'选择月份');
+      const index=choices.indexOf(selections[key]);el('period-prev').disabled=index<=0;el('period-next').disabled=index>=choices.length-1;
+      el('period-prev').setAttribute('aria-label',key==='hours'?'前一天':'前一个月');el('period-next').setAttribute('aria-label',key==='hours'?'后一天':'后一个月');
+    }
     function select(d){
       el('selected').textContent=d.key;el('selected-total').textContent=amount(d.mb);
       el('selected-main').textContent='主卡 '+amount(d.mainMB);el('selected-vice').textContent='副卡 '+amount(d.viceMB);
@@ -636,14 +671,15 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
       Array.from(el('rows').children).forEach(item=>item.classList.toggle('selected',item.dataset.key===d.key));
     }
     function render(key){
-      current=key;report=reports[key];const mode=modes[key];
+      current=key;report=selectedReport(key);const mode=modes[key];renderPicker(key);
       Object.keys(modes).forEach(name=>{el('tab-'+name).classList.toggle('active',name===key);el('tab-'+name).setAttribute('aria-pressed',String(name===key));});
-      el('period-label').textContent=key==='year'?'已记录月均用量':report.month+(key==='hours'?' · 今日已记录用量':' · 本月已记录用量（含同月跨日）');
+      el('period-label').textContent=key==='year'?'已记录月均用量':report.month+(key==='hours'?' · 单日已记录用量':' · 单月已记录用量（含同月跨日）');
       el('total').textContent=key==='year'?(report.average.monthCount?amount(report.average.mb):'积累中'):amount(report.totalMB);
       el('main-label').textContent=key==='year'?'主卡月均':'主卡';el('vice-label').textContent=key==='year'?'副卡月均':'副卡';el('main-total').textContent=amount(totalFor(report,'mainMB'));el('vice-total').textContent=amount(totalFor(report,'viceMB'));
       const unknown=totalFor(report,'unknownMB');el('unknown-total').hidden=!(unknown>0);el('unknown-total').textContent=(key==='year'?'未确认月均 ':'归属未确认 ')+amount(unknown);el('unknown-legend').hidden=!report.days.some(d=>d.unknownMB>0);
       const recorded=report.days.filter(d=>d.mb!=null).length;
       el('coverage').textContent=key==='year'?(report.average.monthCount?'按 '+report.average.monthCount+' 个已结束月份计算 · 不含本月与无数据月'+(report.average.partialMonthCount?'（含 '+report.average.partialMonthCount+' 个部分记录月）':''):'暂无已结束且有记录的月份；本月尚在积累'):'已记录 '+recorded+' / '+report.days.length+' 个'+mode.label+' · '+(key==='month'?'包含同月跨日区间':'跨日区间单独列出');
+      if(key==='hours'&&!recorded)el('coverage').textContent=(report.month===reports.hours.month?'今日':'所选日期')+'暂无有效采样 · 未补零';
       el('chart-title').textContent=mode.title;el('chart-count').textContent=recorded+' 个'+mode.label+'有记录';el('date-heading').textContent=mode.label;
       el('chart').style.minWidth=mode.width+'px';el('chart').replaceChildren();el('rows').replaceChildren();
       const peak=Math.max(0,...report.days.map(d=>d.future?0:d.mb||0)),max=peak||1;
@@ -655,18 +691,20 @@ function statisticsHTML(reports, stale = false, initialPeriod = 'month') {
         const row=document.createElement('tr');row.dataset.key=d.key;const date=document.createElement('td');const dateButton=document.createElement('button');dateButton.className='date';dateButton.textContent=key==='year'?d.key:key==='hours'?d.day+':00':d.key.slice(5);dateButton.onclick=()=>select(d);date.append(dateButton);row.append(date);
         for(const [value,className] of [[d.mainMB,'main'],[d.viceMB,'vice'],[d.unknownMB,''],[d.mb,'']]){const cell=document.createElement('td');cell.textContent=amount(value);cell.className=className;row.append(cell);}const state=document.createElement('td');state.textContent=status(d);row.append(state);el('rows').append(row);
       }
-      el('cross-hint').hidden=key==='year'||!report.crossDay.length;el('cross-hint').textContent=(key==='month'?'其中跨日未分配 ':'另有跨日待分配 ')+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段，'+(key==='month'?'已计入本月合计':'未计入上方合计');
+      el('cross-hint').hidden=key==='year'||!report.crossDay.length;el('cross-hint').textContent=(key==='month'?'其中跨日未分配 ':'另有跨日待分配 ')+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段，'+(key==='month'?'已计入所选月份合计':'未计入上方合计');
       el('chart-foot').textContent=key==='year'?'左右滑动查看月份，点击查看明细；灰色为无数据占位':key==='hours'?'点击时段查看明细；跨小时增量计入结束小时，不平均摊分':'左右滑动查看整月，点击日期查看明细；短柱不代表固定用量';
-      el('cross-description').textContent=key==='month'?'这部分已计入本月合计，无法准确拆到每天，因此未计入每日柱状图。':'这部分无法准确拆到小时，未计入今日小时合计。';
+      el('cross-description').textContent=key==='month'?'这部分已计入所选月份合计，无法准确拆到每天，因此未计入每日柱状图。':'这部分无法准确拆到小时，未计入所选日期小时合计。';
       el('cross-card').hidden=key==='year'||!report.crossDay.length;el('cross-summary').textContent='跨日未分配 '+amount(report.unallocatedMB)+' · '+report.crossDay.length+' 段';el('cross-events').replaceChildren();
       for(const interval of report.crossDay){const item=document.createElement('div');item.className='cross-event';item.textContent=clock(interval.from,true)+' → '+clock(interval.at,true)+'\\n合计 '+amount(interval.mb)+' · 主 '+amount(interval.mainMB)+' / 副 '+amount(interval.viceMB)+' / 未确认 '+amount(interval.unknownMB);el('cross-events').append(item);}
-      el('scope').textContent=key==='year'?'每根柱子表示一个月已记录的用量，不累计跨月总量。月均只对已结束且有记录的月份计算，不含本月与空白月份；部分记录月份会标注并计入已记录月均，不能当作完整账单月均。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'顶部为本月已记录用量，包含同日和可确认的同月跨日区间，与趋势图的本月柱一致。每日图不拆分跨日区间，因此每日柱子的合计可能低于本月顶部合计。';
+      el('scope').textContent=key==='year'?'每根柱子表示一个月已记录的用量，不累计跨月总量。月均只对已结束且有记录的月份计算，不含本月与空白月份；部分记录月份会标注并计入已记录月均，不能当作完整账单月均。':key==='hours'?'小时图来自同日的有效区间，按查询结束小时归集。长时间没有采样时，一根柱可能包含多个小时的用量。':'顶部为所选月份已记录用量，包含同日和可确认的同月跨日区间，与趋势图中对应月份的柱子一致。每日图不拆分跨日区间，因此每日柱子的合计可能低于所选月份顶部合计。';
       el('updated').textContent='最后成功查询 '+clock(report.lastSuccess,true)+'\\n切换视图使用同一份记录，不额外查询';
       select(report.days.find(d=>d.key===report.today)||report.days[report.days.length-1]);
     }
     // 禁止双击缩放，但不拦截 touchmove，保留图表和表格的正常滚动。
     document.addEventListener('dblclick',event=>event.preventDefault(),{passive:false});
-    Object.keys(modes).forEach(key=>el('tab-'+key).onclick=()=>render(key));render(Object.hasOwn(modes,initial)?initial:'month');
+    el('period-prev').onclick=()=>changePeriod(-1);el('period-next').onclick=()=>changePeriod(1);
+    el('period-select').onchange=()=>{const key=el('period-select').value;if(current!=='year'&&periodChoices(current).includes(key)){selections[current]=key;render(current);}};
+    Object.keys(modes).forEach(key=>el('tab-'+key).onclick=()=>render(key));render(Object.hasOwn(modes,initial)&&reports[initial]?initial:reports.hours?'hours':'month');
   })();</script></body></html>`;
 }
 

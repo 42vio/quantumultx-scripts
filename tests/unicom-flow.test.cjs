@@ -348,6 +348,23 @@ function distributionFixture() {
   assert.equal(api.hourlyReport(futureHour,at+2*3600000).totalMB,90);
   assert.equal(api.hourlyReport(cardCross,midnight).totalMB,null);assert.equal(api.hourlyReport(cardCross,midnight).unallocatedMB,30);
 
+  // 日期切换使用真实当前时刻判定未来小时，历史日期全天均可查看。
+  const browseAt=new Date(2026,10,5,12,30).getTime();
+  const makeEvent=(day,hour,main,vice)=>({from:new Date(day+'T'+String(hour).padStart(2,'0')+':00:00').getTime(),at:new Date(day+'T'+String(hour).padStart(2,'0')+':30:00').getTime(),mb:main+vice,mainMB:main,viceMB:vice,unknownMB:0});
+  const browsing={...averageHistory,events:[makeEvent('2026-10-29',8,900,0),makeEvent('2026-10-30',8,3,2),makeEvent('2026-11-04',9,60,30)],data:{...averageHistory.data,at:browseAt}};
+  const originalBrowsing=JSON.stringify(browsing);
+  const browseReports=api.statisticsReports(browsing,browseAt);
+  assert.equal(JSON.stringify(browsing),originalBrowsing); // 生成选择器只读历史
+  assert.equal(Object.keys(browseReports.dates).length,6);assert.ok(browseReports.dates['2026-10-30']);
+  assert.equal(browseReports.dates['2026-10-29'],undefined);
+  assert.equal(browseReports.dates['2026-11-04'].totalMB,90);
+  assert.equal(browseReports.dates['2026-11-04'].days[23].future,false);
+  assert.equal(browseReports.hours.totalMB,null);assert.equal(browseReports.hours.days[13].future,true);
+  assert.equal(browseReports.months['2026-10'].totalMB,300);assert.equal(browseReports.months['2026-10'].days.length,31);
+  assert.ok(browseReports.months['2026-10'].days.every(d=>!d.future));
+  assert.equal(api.monthlyReport(browsing,browseAt,'2024-02').days.length,29);
+  assert.equal(api.monthlyReport(browsing,browseAt,'2027-01').month,'2026-11');
+  assert.equal(api.hourlyReport(browsing,browseAt,'2026-11-06').month,'2026-11-05');
   // 执行完整统计页脚本，验证同页切换、逐卡表格、缺失占位及图表选择。
   class Element {
     constructor(){this.children=[];this.dataset={};this.style={};this.attributes={};this.classes=new Set();this.classList={toggle:(key,value)=>value?this.classes.add(key):this.classes.delete(key)};}
@@ -355,12 +372,39 @@ function distributionFixture() {
     setAttribute(key,value){this.attributes[key]=value;}
   }
   const elements=new Map(),listeners=new Map();const doc={addEventListener:(type,handler)=>listeners.set(type,handler),getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},createElement:()=>new Element()};
-  const html=api.statisticsHTML(api.statisticsReports(zero,midnight+3600000),true);
+  // 默认进入今天，即使今天无记录也不自动跳转；切换周期同步汇总且不改变历史。
+  const browsingHTML=api.statisticsHTML(browseReports);
+  new vm.Script(browsingHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
+  assert.equal(elements.get('tab-hours').attributes['aria-pressed'],'true');
+  assert.equal(elements.get('period-select').value,'2026-11-05');assert.equal(elements.get('period-next').disabled,true);
+  assert.equal(elements.get('chart').children.length,24);assert.equal(elements.get('total').textContent,'—');
+  assert.ok(elements.get('coverage').textContent.includes('今日暂无有效采样'));
+  elements.get('period-prev').onclick();
+  assert.equal(elements.get('period-select').value,'2026-11-04');assert.equal(elements.get('total').textContent,'90.00 MB');
+  assert.equal(elements.get('main-total').textContent,'60.00 MB');assert.equal(elements.get('vice-total').textContent,'30.00 MB');
+  assert.ok(elements.get('period-label').textContent.startsWith('2026-11-04'));assert.ok(!elements.get('period-label').textContent.includes('今日'));
+  elements.get('period-select').value='2026-10-30';elements.get('period-select').onchange();
+  assert.equal(elements.get('total').textContent,'5.00 MB');assert.equal(elements.get('period-prev').disabled,true);
+  elements.get('period-prev').onclick();assert.equal(elements.get('period-select').value,'2026-10-30');
+  elements.get('period-select').value='2026-12-01';elements.get('period-select').onchange();
+  assert.equal(elements.get('total').textContent,'5.00 MB'); // 无效日期不能切换
+  elements.get('tab-month').onclick();
+  assert.equal(elements.get('period-select').value,'2026-11');
+  elements.get('period-prev').onclick();assert.equal(elements.get('period-select').value,'2026-10');
+  assert.equal(elements.get('total').textContent,'300.00 MB');assert.equal(elements.get('main-total').textContent,'200.00 MB');
+  assert.equal(elements.get('chart').children.length,31);assert.ok(elements.get('period-label').textContent.startsWith('2026-10'));
+  elements.get('tab-year').onclick();assert.equal(elements.get('period-picker').hidden,true);
+  assert.equal(elements.get('total').textContent,'150.00 MB');
+  elements.get('tab-month').onclick();assert.equal(elements.get('period-select').value,'2026-10');
+  elements.get('tab-hours').onclick();assert.equal(elements.get('period-select').value,'2026-10-30');
+  assert.equal(JSON.stringify(browsing),originalBrowsing);assert.ok(!browsingHTML.includes('fetch('));
+  elements.clear();
+  const html=api.statisticsHTML(api.statisticsReports(zero,midnight+3600000),true,'month');
   new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   assert.equal(elements.get('chart').children.length,30);assert.equal(elements.get('rows').children.length,30);
   assert.ok(html.includes('user-scalable=no'));assert.ok(html.includes('touch-action:manipulation'));assert.ok(html.includes('padding:56px 18px 30px'));assert.ok(!html.includes('safe-area-inset-top'));
   assert.ok(!html.includes('.bar.selected{'));assert.ok(html.includes('.bar.selected .tick{background:var(--blue);color:#fff'));
-  assert.ok(html.includes('>今日</button>'));assert.ok(html.includes('>月度趋势</button>'));
+  assert.ok(html.includes('>单日</button>'));assert.ok(html.includes('>月度趋势</button>'));
   let prevented=false;listeners.get('dblclick')({preventDefault:()=>{prevented=true;}});assert.equal(prevented,true);
 
   assert.ok(!html.includes('axis-max'));assert.ok(!html.includes('class="axis"'));
@@ -382,11 +426,11 @@ function distributionFixture() {
   api.applyTheme({theme:'白色'});assert.ok(api.statisticsHTML(api.statisticsReports(zero,midnight)).includes('color-scheme:light'));api.applyTheme({theme:'黑色'});
   elements.clear();
   const beforeReports=JSON.stringify(cardCross);
-  const reports=api.statisticsReports(cardCross,midnight), cardsHTML=api.statisticsHTML(reports);
+  const reports=api.statisticsReports(cardCross,midnight), cardsHTML=api.statisticsHTML(reports,false,'month');
   assert.equal(JSON.stringify(cardCross),beforeReports); // 只读视图不改写历史
 
   new vm.Script(cardsHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
-  assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入本月合计'));
+  assert.equal(elements.get('total').textContent,'120.00 MB');assert.equal(elements.get('main-total').textContent,'80.00 MB');assert.ok(elements.get('cross-hint').textContent.includes('已计入所选月份合计'));
   assert.equal(elements.get('chart').children[2].children[0].style.height,'140px');
   const stackedMonth=elements.get('chart').children[2].children[0].children;
   assert.equal(stackedMonth.length,2);assert.equal(stackedMonth[0].style.background,'#0A94FF');assert.equal(stackedMonth[1].style.background,'#8A73FF');
@@ -410,21 +454,22 @@ function distributionFixture() {
   // 网页各视图保留两位：大 MB、小 MB 和 GB 不走组件默认精度。
   const fractionalReports=api.statisticsReports(cardCross,midnight);
   fractionalReports.month.days[2]={...fractionalReports.month.days[2],mb:954.53,mainMB:0.03,viceMB:954.5,unknownMB:0};
-  let fractionalHTML=api.statisticsHTML(fractionalReports);
+  let fractionalHTML=api.statisticsHTML(fractionalReports,false,'month');
   new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   elements.get('chart').children[2].onclick();
   assert.equal(elements.get('selected-total').textContent,'954.53 MB');assert.equal(elements.get('selected-main').textContent,'主卡 0.03 MB');
   fractionalReports.month.days[2].mb=10.39*1024;
-  fractionalHTML=api.statisticsHTML(fractionalReports);
+  fractionalHTML=api.statisticsHTML(fractionalReports,false,'month');
   new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'10.39 GB');
   fractionalReports.month.days[2].mb=0.001;
-  fractionalHTML=api.statisticsHTML(fractionalReports);
+  fractionalHTML=api.statisticsHTML(fractionalReports,false,'month');
   new vm.Script(fractionalHTML.match(/<script>([\s\S]*?)<\/script>/)[1]).runInNewContext({document:doc});
   elements.get('chart').children[2].onclick();assert.equal(elements.get('selected-total').textContent,'<0.01 MB');
   const monthlyOutput='/private/tmp/unicom-monthly-preview';fs.mkdirSync(monthlyOutput,{recursive:true});
+  fs.writeFileSync(monthlyOutput+'/browse.html',browsingHTML);
   fs.writeFileSync(monthlyOutput+'/monthly.html',cardsHTML);fs.writeFileSync(monthlyOutput+'/yearly.html',averageHTML);
-  api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports));api.applyTheme({theme:'黑色'});
+  api.applyTheme({theme:'白色'});fs.writeFileSync(monthlyOutput+'/monthly-light.html',api.statisticsHTML(reports,false,'month'));api.applyTheme({theme:'黑色'});
   fs.writeFileSync(monthlyOutput+'/hourly.html',api.statisticsHTML(api.statisticsReports(cardNext,at+2*3600000),false,'hours'));
 
   // 真正的原生绘图代码在 mock 中执行，将相同绘图指令输出为 SVG 供视觉检查。
@@ -864,5 +909,5 @@ function distributionFixture() {
   files.set(path,source);
   updateSource=new Error('download failed'); await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
   updateSource='<html>error</html>'; await instance.checkAndUpdateScript(); assert.equal(files.get(path),source);
-  console.log('PASS: month/today参数独立渲染及刷新保留模式/今日复用既有逐卡区间/删除冗余套餐字段/零区间不覆盖旧用量/归属不明确不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
+  console.log('PASS: 默认单日今日/7日小时切换/12月每日切换/顶部汇总同步/日期边界/零与缺失/切换只读不持久化、month/today参数独立渲染及刷新保留模式/今日复用既有逐卡区间/删除冗余套餐字段/零区间不覆盖旧用量/归属不明确不猜测/零与缺失状态/GB精度阈值/图例空白状态区分、本月日聚合/跨日未分配/零与缺失/旧历史清空/逐卡堆叠与未知归属/12个月保留/逐卡明细列/已结束月份月均/本月合计口径一致/禁止双击缩放/Close顶部留白/小时与月度同页切换/日期交互/离线缓存、主副卡数据隔离/脱敏/缺失和冲突、抓包结构/镜像去重/角色标记/排除语音短信成员、请求主机与表单体/过期 Cookie 提示/表单失败回退、刻度居中/整卡背景、共享流量标题/零主卡图例隐藏/底部图例对齐/圆角安全留白/不同尺寸布局、无版本直接同步/校验/直接替换/本地与iCloud、黑白主题、共享/非共享分布、自动与手动分组、套餐解析、单位、重复共享包、缺失字段、分类、历史回退/跨月/跨日、会话隔离、乱序、原生绘图、首次运行/断网缓存、DmYY 分组菜单与尺寸预览、配置页不查询账号及 Cookie 不落盘。');
 })();

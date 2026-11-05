@@ -883,7 +883,18 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
   if (metric) detail = metric.detail || (metric.total == null ? '不限量' : `${formatMB(metric.total, 'total')}(${metric.total > 0 ? Math.round(metric.used / metric.total * 100) : '--'}%)`);
   if (today && metric) detail = metric.total == null ? `${formatGB(metric.used)} GB / 不限量` : `${formatGB(metric.used)}/${formatGB(metric.total, true)}GB`;
   const totalParts = detail.match(/^(.*?)(MB|GB)(.*)$/);
-  if (totalParts) {
+  if (today && metric && metric.total != null) {
+    const runs = [formatGB(metric.used), '/', formatGB(metric.total, true), 'GB'];
+    const gap = 2;
+    const size = Math.min(UF.totalFontSize, (textWidth - gap * (runs.length - 1))
+      / Math.max(1, runs.reduce((sum, run) => sum + numberWidth(run, 1, 'total'), 0)));
+    let runX = textX;
+    for (const run of runs) {
+      const runWidth = numberWidth(run, size, 'total');
+      text(ctx, run, runX, y + 44, runWidth + gap, 16, size, UF.muted, 'total');
+      runX += runWidth + gap;
+    }
+  } else if (totalParts) {
     const gap = 2;
     const size = Math.min(UF.totalFontSize, (textWidth - gap) / Math.max(1, numberWidth(detail, 1, 'total')));
     const unitX = textX + numberWidth(totalParts[1], size, 'total') + gap;

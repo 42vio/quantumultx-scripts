@@ -582,7 +582,12 @@ function distributionFixture() {
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
     assert.ok(todayImage.indexOf('主卡独享 · 今日')<todayImage.indexOf('共享流量 · 今日'));
     assert.ok(todayImage.includes('>30.0</text>'));assert.ok(todayImage.includes('>50.0</text>'));
-    assert.ok(todayImage.includes('>0.22/120</text>'));assert.ok(todayImage.includes('>0.34/80</text>'));
+    assert.ok(todayImage.includes('>0.22</text>'));assert.ok(todayImage.includes('>120</text>'));
+    assert.ok(todayImage.includes('>0.34</text>'));assert.ok(todayImage.includes('>80</text>'));
+    const totalRuns=[...todayImage.matchAll(/<text x="([0-9.]+)" y="(?:67|139)"[^>]*font-size="11">([^<]+)<\/text>/g)];
+    assert.equal(totalRuns.slice(0,4).map(run=>run[2]).join('|'),'0.34|/|80|GB');
+    const widths=[(3*0.60+0.28)*11,0.30*11,2*0.60*11];
+    for(let index=0;index<3;index++) assert.ok(Math.abs(Number(totalRuns[index+1][1])-Number(totalRuns[index][1])-widths[index]-2)<1e-8);
     assert.ok(!/>[^<]*%[^<]*<\/text>/.test(todayImage));assert.ok(!todayImage.includes('本月'));
     assert.ok(todayImage.includes('今日已记录'));assert.ok(!todayImage.includes('主 60.0MB'));
     if(medium) {assert.ok(todayImage.includes('>主卡</text>'));assert.ok(todayImage.includes('>副卡</text>'));assert.ok(todayImage.includes('小时用量'));}

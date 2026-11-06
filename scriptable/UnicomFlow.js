@@ -39,12 +39,17 @@ const UF = {
   refreshMinutes: 30, dataRequestMinutes: 30, crossDayLimitMB: 10,
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium', todayFont: '系统 Medium',
-  usageFontSize: 25, totalFontSize: 11, todayFontSize: 9.5, titleFontSize: null,
-  sectionBackground: true,
+  usageFontSize: 25, totalFontSize: 11, todayFontSize: 12, titleFontSize: null,
+  sectionBackground: true, mediumLayout: '今日横条',
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', panelBg: '28282C', todayBg: '37373D',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
 const UF_DEFAULTS = { ...UF };
+const UF_MEDIUM_LAYOUTS = ['今日横条', '今日集中方块', '今日侧边胶囊'];
+
+function normalizedMediumLayout(value) {
+  return UF_MEDIUM_LAYOUTS.includes(value) ? value : UF_DEFAULTS.mediumLayout;
+}
 
 // 字体与字重合并选择；Menlo 没有原生 Medium，不以其他字体冒充。
 const UF_NUMBER_FONTS = {
@@ -1208,62 +1213,106 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
   }
 }
 
-function drawCombinedMetric(ctx, metric, label, daily, x, width) {
-  const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  const todayValue = formatMB(daily, 'daily');
-  const todayMatch = todayValue.match(/^(.*?)(MB|GB)$/);
-  const todayRuns = todayMatch ? [todayMatch[1], todayMatch[2]] : [todayValue];
-  const stampWidth = width - 14, stampLabel = 7, stampY = 68, stampH = 17;
-  // 整串含空格时真机会把MB/GB换到下一行；数字、单位分开绘制，并为字体实际字宽留余量。
-  const gap = 2, padding = 2;
-  const runUnits = todayRuns.map((run, index) => numberWidth(run, 1, 'today') * (index ? 1.2 : 1.05));
-  const todaySize = Math.min(UF.todayFontSize, (stampWidth - 25 - padding * todayRuns.length - gap * (todayRuns.length - 1))
-    / Math.max(1, runUnits.reduce((sum, n) => sum + n, 0)));
-  const runWidths = runUnits.map(n => n * todaySize + padding);
-  const groupWidth = 17 + runWidths.reduce((sum, n) => sum + n, 0) + gap * (todayRuns.length - 1);
-  const stampX = x + 7, groupX = x + (width - groupWidth) / 2;
-  const titleWidth = width;
-  const titleSize = Math.min(UF.titleFontSize || 11, titleWidth / Math.max(1, title.length));
-  text(ctx, title, x, 11, titleWidth, 14, titleSize, UF.text, false, false, true);
-  if (UF.sectionBackground) roundedRect(ctx, stampX, stampY, stampWidth, stampH, 5, UF.todayBg);
-  // 数字、单位同字号同高度；标签与数值各自按行高垂直居中，整组水平居中。
-  const centeredY = size => stampY + (stampH - size * 1.2) / 2;
-  text(ctx, '今日', groupX, centeredY(stampLabel), 14, stampLabel * 1.2, stampLabel, UF.muted);
-  let todayX = groupX + 17;
-  todayRuns.forEach((run, index) => {
-    text(ctx, run, todayX, centeredY(todaySize), runWidths[index], todaySize * 1.2, todaySize, UF.text, 'today');
-    todayX += runWidths[index] + gap;
+// 柔和底色从当前主题和主副卡颜色混合，开关不参与任何布局计算。
+function combinedTint(accent, strength = 0.09) {
+  return [0, 2, 4].map(offset => {
+    const base = parseInt(UF.bg.slice(offset, offset + 2), 16), color = parseInt(accent.slice(offset, offset + 2), 16);
+    return Math.round(base + (color - base) * strength).toString(16).padStart(2, '0');
+  }).join('');
+}
+
+function combinedTodayText(value, width) {
+  const formatted = formatMB(value, 'daily'), match = formatted.match(/^(.*?)(MB|GB)$/);
+  const runs = match ? [match[1], match[2]] : [formatted];
+  // 数字、单位独立绘制并预留真实字宽，避免真机换行后裁掉单位。
+  const units = runs.map((run, index) => numberWidth(run, 1, 'today') * (index ? 1.2 : 1.05));
+  const size = Math.min(UF.todayFontSize, (width - 2 * runs.length - 2 * (runs.length - 1)) / Math.max(1, units.reduce((a, b) => a + b, 0)));
+  const widths = units.map(unit => unit * size + 2);
+  return { runs, size, widths, width: widths.reduce((a, b) => a + b, 0) + 2 * (runs.length - 1) };
+}
+
+function drawCombinedToday(ctx, value, x, y, width, height, label = '') {
+  const labelWidth = label ? 14 : 0, gap = label ? 3 : 0;
+  const spec = combinedTodayText(value, width - labelWidth - gap);
+  let start = x + (width - spec.width - labelWidth - gap) / 2;
+  if (label) {
+    text(ctx, label, start, y + (height - 8.4) / 2, labelWidth, 8.4, 7, UF.muted);
+    start += labelWidth + gap;
+  }
+  spec.runs.forEach((run, index) => {
+    text(ctx, run, start, y + (height - spec.size * 1.2) / 2, spec.widths[index], spec.size * 1.2, spec.size, UF.text, 'today');
+    start += spec.widths[index] + 2;
   });
+}
+
+function drawCombinedMonth(ctx, metric, x, y, width, stacked = false) {
   const used = metric ? metric.used / 1024 : null;
   const primary = used == null ? '—' : used > 0 && used < 0.1 ? '<0.1' : used.toFixed(1);
-  const quota = metric ? metric.total == null ? ' / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
-  const suffix = metric && metric.total == null ? ' GB' + quota : quota;
-  const quotaSize = UF.totalFontSize;
-  const primarySize = Math.min(UF.usageFontSize, (width - numberWidth(suffix, quotaSize, 'total') - 2)
+  const quota = metric ? metric.total == null ? ' GB / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
+  const quotaSize = Math.min(UF.totalFontSize, width / Math.max(1, numberWidth(quota, 1, 'total')));
+  const primarySize = Math.min(UF.usageFontSize, (width - (stacked ? 0 : numberWidth(quota, quotaSize, 'total') + 2))
     / Math.max(1, numberWidth(primary, 1, 'usage')));
   const valueWidth = numberWidth(primary, primarySize, 'usage');
-  text(ctx, primary, x, 25, valueWidth + 2, 29, primarySize, UF.text, 'number');
-  if (suffix) text(ctx, suffix, x + valueWidth + 2, 25 + primarySize - quotaSize,
-    width - valueWidth - 2, 17, quotaSize, UF.muted, 'total');
-  const trackY = 55, trackH = 3;
-  roundedRect(ctx, x, trackY, width, trackH, 1.5, UF.track);
+  text(ctx, primary, x, y, valueWidth + 2, 34, primarySize, UF.text, 'number');
+  if (quota) text(ctx, quota, stacked ? x : x + valueWidth + 2, stacked ? y + 28 : y + primarySize - quotaSize,
+    stacked ? width : width - valueWidth - 2, 18, quotaSize, UF.muted, 'total');
+}
+
+function drawCombinedProgress(ctx, metric, x, y, width, height = 3) {
+  roundedRect(ctx, x, y, width, height, height / 2, UF.track);
+  if (!metric || !(metric.total > 0 && metric.used > 0)) return;
+  const c = metric.composition, scale = width / Math.max(metric.total, metric.used);
+  if (c && c.complete) {
+    for (const [offset, value, color] of [[0, c.main, UF.blue], [c.main, c.vice, UF.purple]]) {
+      if (value > 0) { ctx.setFillColor(new Color(color)); ctx.fillRect(new Rect(x + offset * scale, y, value * scale, height)); }
+    }
+  } else if (!c) roundedRect(ctx, x, y, metric.used * scale, height, height / 2, UF.blue);
+}
+
+function drawCombinedDetail(ctx, metric, x, y, width) {
   const c = metric && metric.composition;
-  if (metric && metric.total > 0 && metric.used > 0) {
-    const scale = width / Math.max(metric.total, metric.used);
-    if (c && c.complete) {
-      // 整条代表套餐总量，主副卡按实际用量相邻堆叠，不放大短段。
-      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, trackY, c.main * scale, trackH)); }
-      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + c.main * scale, trackY, c.vice * scale, trackH)); }
-    } else if (!c) roundedRect(ctx, x, trackY, metric.used * scale, trackH, 1.5, UF.blue);
-  }
-  if (c && !c.complete) text(ctx, '明细未确认', x, 59, width, 8, 6.5, UF.warning);
+  if (c && !c.complete) text(ctx, '明细未确认', x, y, width, 8, 6.5, UF.warning);
   else if (c && c.main > 0) {
     const half = width / 2;
     for (const [index, name, value, color] of [[0, '主', c.main, UF.blue], [1, '副', c.vice, UF.purple]]) {
-      roundedRect(ctx, x + index * half, 61, 2, 2, 1, color);
-      text(ctx, `${name} ${formatMB(value).replace(/(MB|GB)$/, ' $1')}`, x + index * half + 4, 59,
-        half - 4, 8, 6.5, UF.muted);
+      roundedRect(ctx, x + index * half, y + 2, 2, 2, 1, color);
+      text(ctx, `${name} ${formatMB(value).replace(/(MB|GB)$/, ' $1')}`, x + index * half + 4, y, half - 4, 8, 6.5, UF.muted);
     }
+  }
+}
+
+function drawCombinedMetric(ctx, metric, label, daily, x, width, accent) {
+  const side = UF.mediumLayout === '今日侧边胶囊';
+  const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
+  text(ctx, title, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
+  drawCombinedMonth(ctx, metric, x, side ? 29 : 28, side ? width - 62 : width, side);
+  drawCombinedProgress(ctx, metric, x, side ? 75 : 59, width);
+  drawCombinedDetail(ctx, metric, x, side ? 80 : 62, width);
+  if (side) {
+    const boxX = x + width - 55;
+    if (UF.sectionBackground) roundedRect(ctx, boxX, 31, 55, 41, 7, combinedTint(accent));
+    text(ctx, '今日', boxX, 36, 55, 9, 7, UF.muted, false, true);
+    drawCombinedToday(ctx, daily, boxX + 3, 48, 49, 21);
+  } else {
+    if (UF.sectionBackground) roundedRect(ctx, x, 70, width, 17, 6, combinedTint(accent));
+    drawCombinedToday(ctx, daily, x + 3, 70, width - 6, 17, '今日');
+  }
+}
+
+function drawCombinedRows(ctx, metrics, daily, x, width) {
+  const square = 72, gap = 12, rowWidth = width - square - gap, boxX = x + rowWidth + gap;
+  for (const [index, metric, label, accent] of [[0, metrics.left, metrics.leftLabel, UF.blue], [1, metrics.right, metrics.rightLabel, UF.purple]]) {
+    const y = 8 + index * 37;
+    if (UF.sectionBackground) roundedRect(ctx, x - 4, y, rowWidth + 8, 34, 8, combinedTint(accent, 0.045));
+    text(ctx, label, x + 2, y + 9, 50, 14, Math.min(UF.titleFontSize || 10, 50 / Math.max(1, label.length)), UF.text, false, false, true);
+    drawCombinedMonth(ctx, metric, x + 54, y, rowWidth - 54);
+    drawCombinedProgress(ctx, metric, x + 54, y + 29.5, rowWidth - 58, 2.5);
+  }
+  drawCombinedDetail(ctx, metrics.right, x, 80, rowWidth);
+  if (UF.sectionBackground) roundedRect(ctx, boxX, 8, square, square, 10, combinedTint(UF.purple, 0.045));
+  text(ctx, '今日用量', boxX, 14, square, 11, 8, UF.muted, false, true);
+  for (const [index, label] of [[0, metrics.leftLabel === '主卡独享' ? '独享' : metrics.leftLabel], [1, metrics.rightLabel === '共享流量' ? '共享' : metrics.rightLabel]]) {
+    drawCombinedToday(ctx, daily[index], boxX + 3.5, 30 + index * 24, square - 7, 18, label);
   }
 }
 
@@ -1326,13 +1375,12 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const buckets = medium && today ? todayBuckets(result.history, now) : [];
   if (combined) {
     const leftX = pad + 6, col = (width - 2 * leftX - 12) / 2, rightX = leftX + col + 12;
-    // 底板只负责绘制，不参与内容坐标计算；相邻底板留4点缝隙，内容四周留4点。
-    if (UF.sectionBackground) for (const x of [leftX, rightX]) {
-      roundedRect(ctx, x - 4, 8, col + 8, 78, 8, UF.panelBg);
-      roundedRect(ctx, x - 4, 87, col + 8, 56, 8, UF.panelBg);
+    if (UF.mediumLayout === '今日集中方块') {
+      drawCombinedRows(ctx, metrics, daily, leftX, width - 2 * leftX);
+    } else {
+      drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue);
+      drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple);
     }
-    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col);
-    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col);
     // 下半双图的坐标与底色开关无关。
     const chartY = 98;
     drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', leftX, chartY, col, true);
@@ -1431,7 +1479,7 @@ function makeWidget(result, medium, mode = 'month') {
   const size = widgetSize(medium);
   // 整卡背景由系统适配尺寸，不再放置固定宽度图片，避免图片边缘露出细线。
   widget.backgroundImage = renderImage(result, medium, size.width, size.height, mode);
-  widget.url = medium ? `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics` : 'scriptable:///';
+  widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}`;
 
   return widget;
 }
@@ -1444,7 +1492,7 @@ function errorWidget(message, medium = false) {
   widget.addSpacer(10);
   const msg = widget.addText(message); msg.textColor = new Color(UF.warning); msg.font = Font.systemFont(11);
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60000);
-  widget.url = medium ? `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}&ufAction=statistics` : 'scriptable:///';
+  widget.url = `scriptable:///run?scriptName=${encodeURIComponent(Script.name())}`;
   return widget;
 }
 
@@ -1522,6 +1570,12 @@ function createWidgetClass(DmYY) {
       if (this.settings.sectionBackground !== sectionBackground) {
         this.settings.sectionBackground = sectionBackground; changed = true;
       }
+      const mediumLayout = normalizedMediumLayout(this.settings.mediumLayout);
+      if (this.settings.mediumLayout !== mediumLayout) { this.settings.mediumLayout = mediumLayout; changed = true; }
+      if (!this.settings.todayTypographyDefaultsApplied) {
+        if (this.settings.todayFont === '系统 Medium' && String(this.settings.todayFontSize) === '9.5') this.settings.todayFontSize = '12';
+        this.settings.todayTypographyDefaultsApplied = true; changed = true;
+      }
       if (changed) this.saveSettings(false);
       this.name = '联通流量';
       this.en = 'UnicomFlow';
@@ -1530,6 +1584,7 @@ function createWidgetClass(DmYY) {
       this.failure = '';
       applyTheme(this.settings);
       UF.sectionBackground = ![false, 'false'].includes(this.settings.sectionBackground);
+      UF.mediumLayout = normalizedMediumLayout(this.settings.mediumLayout);
       if (!this.settings.refreshAfterDate) this.settings.refreshAfterDate = String(UF_DEFAULTS.refreshMinutes);
       // 原间隔同时控制请求和组件，升级时保留用户已设置的查询频率。
       if (this.settings.dataRequestMinutes == null) this.settings.dataRequestMinutes = this.settings.refreshAfterDate;
@@ -1551,6 +1606,7 @@ function createWidgetClass(DmYY) {
       UF.crossDayLimitMB = Number.isFinite(crossLimit) && crossLimit >= 0 && crossLimit <= 1024 ? crossLimit : UF_DEFAULTS.crossDayLimitMB;
       applyTheme(this.settings);
       UF.sectionBackground = ![false, 'false'].includes(this.settings.sectionBackground);
+      UF.mediumLayout = normalizedMediumLayout(this.settings.mediumLayout);
       UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
       for (const kind of ['usage', 'total', 'today']) {
         UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
@@ -1833,12 +1889,12 @@ function createWidgetClass(DmYY) {
           options: Object.keys(UF_NUMBER_FONTS), defaultValue: this.settings[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },
         { name: kind + 'FontSize', val: kind + 'FontSize', title: '文字大小', type: 'input',
           defaultValue: String(normalizedFontSize(this.settings[kind + 'FontSize'], kind)),
-          desc: `${kind === 'today' ? '综合中号今日强调行' : '小号、中号共用'}；输入 ${min}—${max}，支持小数；内容过宽时自动缩小`,
+          desc: `${kind === 'today' ? '综合中号三种布局的今日用量' : '小号、中号共用'}；输入 ${min}—${max}，支持小数；内容过宽时自动缩小`,
           icon: { name: 'textformat.size', color: '#007AFF' },
           onClick: async (_, __, view) => {
             const key = kind + 'FontSize';
             const a = new Alert(); a.title = title + '大小';
-            a.message = `${kind === 'today' ? '综合中号今日强调行。' : '小号、中号共用。'}请输入 ${min}—${max} 之间的字号，支持小数；内容过宽时自动缩小。`;
+            a.message = `${kind === 'today' ? '综合中号三种布局的今日用量。' : '小号、中号共用。'}请输入 ${min}—${max} 之间的字号，支持小数；内容过宽时自动缩小。`;
             a.addTextField(String(UF_DEFAULTS[key]), String(normalizedFontSize(this.settings[key], kind)));
             a.addAction('保存'); a.addCancelAction('取消');
             if (await a.presentAlert() < 0) return;
@@ -1915,6 +1971,8 @@ function createWidgetClass(DmYY) {
       this.registerAction({ title: '组件配置', menu: [
         action('flowUpdate', '脚本更新', 'arrow.down.circle', '#007AFF', () => this.checkAndUpdateScript()),
         { name: 'theme', val: 'theme', title: '组件主题', type: 'select', options: ['黑色', '白色'], defaultValue: '黑色', icon: { name: 'circle.lefthalf.filled', color: '#555555' } },
+        { name: 'mediumLayout', val: 'mediumLayout', title: '中号卡片布局', type: 'select', options: UF_MEDIUM_LAYOUTS,
+          defaultValue: this.settings.mediumLayout, desc: '仅本月综合中号；字体和用量记录共用', icon: { name: 'rectangle.3.group', color: '#007AFF' } },
         { name: 'sectionBackground', val: 'sectionBackground', title: '内容分区底色', type: 'switch', defaultValue: 'true',
           desc: '仅综合中号；开关只改变底色，内容位置与尺寸保持一致', icon: { name: 'square.grid.2x2.fill', color: '#8E8E93' } },
         action('flowFonts', '字体与字号', 'textformat', '#007AFF', () => this.fontSettings()),
@@ -1955,11 +2013,6 @@ async function main() {
   // 手动运行和旧组件点击链接均只打开配置，不触发查询或写刷新日志。
   if (config.runsInApp) {
     const instance = new Widget(args.widgetParameter || '');
-    if (args.queryParameters && args.queryParameters.ufAction === 'statistics') {
-      traceViewing('中号卡片点击入口：用量统计');
-      await instance.showUsageStatistics();
-      return;
-    }
     traceViewing('打开配置菜单');
     await instance.renderAppView(instance._menuActions);
     // DmYY 页面仍有后续交互，不在菜单刚提交时主动通知宿主脚本完成。

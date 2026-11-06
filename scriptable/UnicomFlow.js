@@ -7,11 +7,11 @@
 2. 联通官方 App 首页 → 流量，收到 Cookie 写入成功通知。
 3. 将 DmYY.js 放入同一 Scriptable 脚本目录，再新建脚本粘贴本文件。
 4. 运行后在 DmYY 菜单中预览、配置和刷新数据，再添加桌面组件。
-5. 小组件 Parameter 留空或 month 显示本月，填 today 显示今日已记录用量。
+5. Parameter 留空或 month：小号本月、中号本月+今日双图；today 显示今日已记录用量。
 直接读取 http://boxjs.net/query/data/@YaYa_10010.cookie。
 Cookie 只在请求时读取，不写入文件、不打印日志；文件只保存流量快照。
 支持黑色/白色主题。可识别共享与非共享通用套餐时分开显示，否则显示通用/定向。
-大数字为已用，下方为总量及已用百分比。明细未返回时显示 --。
+本月中号大数字为月已用，同排显示总量，下方显示今日；其余视图沿用原布局。明细未返回时显示 —。
 中号图为两次查询之间的用量增量，记在本次采样小时，不是运营商小时账单。
 iOS 决定实际刷新时刻；首次运行无历史，跨月、套餐变化或计数回退时重建基线。
 接口字段参考：联通套餐查询接口及 ChinaTelecomOperators/ChinaUnicom 公开实现；
@@ -40,7 +40,7 @@ const UF = {
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
   usageFontSize: 25, totalFontSize: 11, titleFontSize: null,
-  bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548',
+  bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '28282D',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
 const UF_DEFAULTS = { ...UF };
@@ -72,8 +72,8 @@ function normalizedTitleSize(value) {
 }
 
 const UF_THEMES = {
-  黑色: { bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B' },
-  白色: { bg: 'FFFFFF', text: '1C1C1E', muted: '686870', track: 'E5E5EA', blue: '007AFF', purple: '7552D9', warning: '946200', gridMajor: 'D1D1D6', gridMinor: 'F0F0F3' },
+  黑色: { bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '28282D', blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B' },
+  白色: { bg: 'FFFFFF', text: '1C1C1E', muted: '686870', track: 'E5E5EA', todayBg: 'F0F3F7', blue: '007AFF', purple: '7552D9', warning: '946200', gridMajor: 'D1D1D6', gridMinor: 'F0F0F3' },
 };
 
 function applyTheme(settings = {}) {
@@ -933,6 +933,42 @@ function todayBuckets(history, at) {
   return buckets;
 }
 
+// 仅压缩组件中的夜间横轴，不修改历史、统计页或其余小时归属。
+function widgetHourSlots(history, at) {
+  const report = hourlyReport(history, at);
+  const slots = report.days.map((day, index) => ({ ...day, samples: day.intervals, weight: 1,
+    label: [0, 6, 12, 18, 23].includes(index) ? String(index).padStart(2, '0') : '' }));
+  const start = new Date(new Date(at).getFullYear(), new Date(at).getMonth(), new Date(at).getDate()).getTime();
+  const end = new Date(start).setHours(6);
+  if (at < end) return slots;
+  const intervals = (history.events || []).filter(e => Number.isFinite(e.from) && Number.isFinite(e.at)
+    && e.from < e.at && e.at <= at && Number.isFinite(e.mb) && e.mb >= 0 && e.from < end && e.at > start)
+    .sort((a, b) => a.from - b.from);
+  let covered = start;
+  for (const e of intervals) {
+    if (e.from > covered) break;
+    covered = Math.max(covered, e.at);
+  }
+  // 边界区间不拆分；把整段用量计入阈值上界，宁可不折叠，也不漏掉跨边界的大用量。
+  if (covered < end || intervals.reduce((sum, e) => sum + e.mb, 0) >= 10) return slots;
+  // 正好06:00结束的区间属于夜间边界；仅在折叠视图中移入夜间柱，从06时柱扣除一次。
+  const boundary = intervals.filter(e => e.at === end && eventDate(e) === dayKey(at)
+    && new Date(e.assignedAt == null ? e.at : e.assignedAt).getHours() === 6);
+  const boundaryParts = usageSummary(boundary);
+  if (boundary.length) {
+    const six = slots[6];
+    for (const key of ['mb', 'mainMB', 'viceMB', 'unknownMB']) six[key] = Math.max(0, six[key] - boundaryParts[key]);
+    six.samples = six.intervals = Math.max(0, six.intervals - boundary.length);
+    if (!six.samples) for (const key of ['mb', 'mainMB', 'viceMB', 'unknownMB']) six[key] = null;
+  }
+  // 隐藏低用量夜间，不显示合并柱；白天从首个有用量小时起，后续小时连续保留。
+  // 尚无白天用量时保留06–23的位置；今日合计仍直接取原始历史，包含隐藏的夜间。
+  const active = slots.findIndex((d, index) => index >= 6 && !d.future && d.samples && d.mb > 0);
+  const first = active < 0 ? 6 : active;
+  return slots.slice(first).map((d, index) => ({ ...d,
+    label: index === 0 || [12, 18, 23].includes(index + first) ? String(index + first).padStart(2, '0') : '' }));
+}
+
 // ---- 手机端存储与请求 ----
 function storage() {
   const fm = FileManager.local();
@@ -1196,6 +1232,84 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
   }
 }
 
+function drawCombinedMetric(ctx, metric, label, daily, x, width, detailRow) {
+  const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
+  const titleSize = Math.min(UF.titleFontSize || 11, width / Math.max(1, title.length));
+  text(ctx, title, x, 10, width, 15, titleSize, UF.text, false, false, true);
+  const used = metric ? metric.used / 1024 : null;
+  const primary = used == null ? '—' : used > 0 && used < 0.01 ? '<0.01' : used.toFixed(2);
+  const quota = metric ? metric.total == null ? ' / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
+  const suffix = metric && metric.total == null ? ' GB' + quota : quota;
+  const quotaSize = UF.totalFontSize;
+  const primarySize = Math.min(UF.usageFontSize, (width - numberWidth(suffix, quotaSize, 'total') - 2)
+    / Math.max(1, numberWidth(primary, 1, 'usage')));
+  const valueWidth = numberWidth(primary, primarySize, 'usage');
+  text(ctx, primary, x, 25, valueWidth + 2, 29, primarySize, UF.text, 'number');
+  if (suffix) text(ctx, suffix, x + valueWidth + 2, 25 + primarySize - quotaSize,
+    width - valueWidth - 2, 17, quotaSize, UF.muted, 'total');
+  const trackY = 55, trackH = 3;
+  roundedRect(ctx, x, trackY, width, trackH, 1.5, UF.track);
+  const c = metric && metric.composition;
+  if (metric && metric.total > 0 && metric.used > 0) {
+    const scale = width / Math.max(metric.total, metric.used);
+    if (c && c.complete) {
+      // 整条代表套餐总量，主副卡按实际用量相邻堆叠，不放大短段。
+      if (c.main > 0) { ctx.setFillColor(new Color(UF.blue)); ctx.fillRect(new Rect(x, trackY, c.main * scale, trackH)); }
+      if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + c.main * scale, trackY, c.vice * scale, trackH)); }
+    } else if (!c) roundedRect(ctx, x, trackY, metric.used * scale, trackH, 1.5, UF.blue);
+  }
+  if (c && !c.complete) text(ctx, '明细未确认', x, 61, width, 10, 7, UF.warning);
+  else if (c && c.main > 0) {
+    const half = width / 2;
+    for (const [index, name, value, color] of [[0, '主', c.main, UF.blue], [1, '副', c.vice, UF.purple]]) {
+      roundedRect(ctx, x + index * half, 64, 2.5, 2.5, 1.25, color);
+      text(ctx, `${name} ${formatMB(value).replace(/(MB|GB)$/, ' $1')}`, x + index * half + 5, 61,
+        half - 5, 11, Math.min(7.5, UF.totalFontSize), UF.muted);
+    }
+  }
+  const dailyY = detailRow ? 73 : 65;
+  roundedRect(ctx, x, dailyY - 1, width, 22, 6, UF.todayBg);
+  text(ctx, '今日', x + 6, dailyY + 5, 18, 13, 9, UF.muted);
+  const todayValue = formatMB(daily, 'daily').replace(/(MB|GB)$/, ' $1');
+  const size = Math.min(14, UF.usageFontSize, (width - 34) / Math.max(1, numberWidth(todayValue, 1, 'usage')));
+  text(ctx, todayValue, x + 28, dailyY + 1, width - 34, 20, size, UF.text, 'number');
+}
+
+function drawCompactChart(ctx, slots, title, x, y, width) {
+  const sampled = slots.filter(d => !d.future && d.samples && d.mb != null);
+  const peak = Math.max(0, ...sampled.map(d => d.mb)), max = Math.max(1, peak);
+  const peakLabel = sampled.length ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
+  text(ctx, title, x, y - 10, width * 0.55, 10, 7.5, UF.muted);
+  text(ctx, `↑ ${peakLabel}`, x + width * 0.55, y - 10, width * 0.45, 10, 7, UF.muted, false, 'right');
+  const unit = width / slots.reduce((n, d) => n + (d.weight || 1), 0), chartH = 128 - y;
+  let offset = 0;
+  slots.forEach(slot => {
+    const cell = unit * (slot.weight || 1), center = x + offset + cell / 2;
+    const barWidth = Math.max(1, Math.min(cell - 1.5, unit * 0.7));
+    if (slot.label) {
+      ctx.setFillColor(new Color(UF.gridMinor)); ctx.fillRect(new Rect(center - 0.25, y, 0.5, chartH));
+      const labelWidth = Math.min(width, Math.max(cell, slot.label.length * 4));
+      const labelX = Math.min(x + width - labelWidth, Math.max(x, center - labelWidth / 2));
+      text(ctx, slot.label, labelX, 130, labelWidth, 9, 7, UF.muted, true, true);
+    }
+    if (!slot.future && slot.samples && slot.mb != null) {
+      if (slot.mb > 0) {
+        const h = slot.mb / max * chartH;
+        let bottom = 128;
+        const parts = eventParts(slot);
+        for (const [key, color] of [['mainMB', UF.blue], ['viceMB', UF.purple], ['unknownMB', UF.warning]]) {
+          if (parts[key] <= 0) continue;
+          const segment = h * parts[key] / slot.mb;
+          bottom -= segment; ctx.setFillColor(new Color(color));
+          ctx.fillRect(new Rect(center - barWidth / 2, bottom, barWidth, segment));
+        }
+      } else { ctx.setFillColor(new Color(UF.track)); ctx.fillRect(new Rect(center - barWidth / 2, 127, barWidth, 1)); }
+    }
+    if (slot.current) roundedRect(ctx, center - 1, y - 3, 2, 2, 1, UF.muted);
+    offset += cell;
+  });
+}
+
 function renderImage(result, medium, width, height, mode = 'month') {
   // 统一为 158 点设计高度，再随组件尺寸缩放，避免小屏沿用固定坐标而挤入圆角。
   width = Math.round(width * 158 / height);
@@ -1212,11 +1326,23 @@ function renderImage(result, medium, width, height, mode = 'month') {
   // 共享逐卡月明细出现时保留安全间隔；其余布局利用留白向上增高，底边固定。
   const chartLift = !today && [metrics.left, metrics.right].some(metric => metric && metric.composition
     && !(metric.composition.complete && metric.composition.main === 0)) ? 0 : 6;
-  const daily = today ? [todayPackageUsage(result.history, metrics.leftIds, Date.now()), todayPackageUsage(result.history, metrics.rightIds, Date.now())] : [];
+  const combined = medium && !today;
+  const daily = today || combined ? [todayPackageUsage(result.history, metrics.leftIds, Date.now()), todayPackageUsage(result.history, metrics.rightIds, Date.now())] : [];
   const now = Date.now();
-  const buckets = !medium ? [] : today ? todayBuckets(result.history, now)
-    : monthlyReport(result.history, now).days.map(day => ({ mb: day.mb || 0, ...eventParts({ ...day, mb: day.mb || 0 }), samples: day.intervals }));
-  if (medium) {
+  const buckets = medium && today ? todayBuckets(result.history, now) : [];
+  if (combined) {
+    const col = (width - 2 * pad - 20) / 2, rightX = pad + col + 20;
+    const detailRow = [metrics.left, metrics.right].some(metric => metric && metric.composition
+      && (!metric.composition.complete || metric.composition.main > 0));
+    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], pad, col, detailRow);
+    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, detailRow);
+    const chartY = detailRow ? 106 : 98;
+    drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', pad, chartY, col);
+    const month = monthlyReport(result.history, now);
+    const days = month.days.map((d, index) => ({ ...d, samples: d.intervals, current: d.key === month.today,
+      label: [0, 9, 19, month.days.length - 1].includes(index) ? String(index + 1) : '' }));
+    drawCompactChart(ctx, days, '本月每日', rightX, chartY, col);
+  } else if (medium) {
     const col = (width - 2 * pad - 20) / 2;
     drawMetric(ctx, metrics.left, metrics.leftLabel, pad, 12, col, false, today, daily[0]);
     drawMetric(ctx, metrics.right, metrics.rightLabel, pad + col + 20, 12, col, false, today, daily[1]);
@@ -1269,7 +1395,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 图例解释整张卡片，置于底部右侧；左侧预留更新时间及异常提示。
   const footerY = height - (medium ? 18 : 15);
-  const dailyHint = today && !status && !daily.some(value => value != null)
+  const dailyHint = (today || combined) && !status && !daily.some(value => value != null)
     ? (todayBuckets(result.history, now).some(b => b.samples) ? '今日分类未确认' : '今日待采样') : '';
   text(ctx, dailyHint ? `${dailyHint} · ${label}` : label, pad + 2, footerY,
     width - 2 * pad - 4 - (medium ? 62 : 0), 9, 6.5,

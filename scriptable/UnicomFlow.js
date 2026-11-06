@@ -38,9 +38,9 @@ const UF = {
   form: 'language=chinese',
   refreshMinutes: 30, dataRequestMinutes: 30, crossDayLimitMB: 10,
   folder: 'UnicomFlow',
-  usageFont: 'SF Mono Medium', totalFont: '系统 Medium',
-  usageFontSize: 25, totalFontSize: 11, titleFontSize: null,
-  bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '28282D',
+  usageFont: 'SF Mono Medium', totalFont: '系统 Medium', todayFont: '系统 Medium',
+  usageFontSize: 25, totalFontSize: 11, todayFontSize: 9.5, titleFontSize: null,
+  bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '32323A',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
 const UF_DEFAULTS = { ...UF };
@@ -72,8 +72,8 @@ function normalizedTitleSize(value) {
 }
 
 const UF_THEMES = {
-  黑色: { bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '28282D', blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B' },
-  白色: { bg: 'FFFFFF', text: '1C1C1E', muted: '686870', track: 'E5E5EA', todayBg: 'F0F3F7', blue: '007AFF', purple: '7552D9', warning: '946200', gridMajor: 'D1D1D6', gridMinor: 'F0F0F3' },
+  黑色: { bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', todayBg: '32323A', blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B' },
+  白色: { bg: 'FFFFFF', text: '1C1C1E', muted: '686870', track: 'E5E5EA', todayBg: 'E6EDF6', blue: '007AFF', purple: '7552D9', warning: '946200', gridMajor: 'D1D1D6', gridMinor: 'F0F0F3' },
 };
 
 function applyTheme(settings = {}) {
@@ -1148,7 +1148,7 @@ function numberWidth(value, size, kind) {
 
 function text(ctx, value, x, y, width, height, size, color = UF.text, mono = false, centered = false, medium = false) {
   ctx.setTextColor(new Color(color));
-  ctx.setFont(mono === 'number' || mono === 'total' ? numberFont(size, mono === 'total' ? 'total' : 'usage') : mono ? Font.regularMonospacedSystemFont(size) : medium ? Font.mediumSystemFont(size) : Font.systemFont(size));
+  ctx.setFont(['number', 'total', 'today'].includes(mono) ? numberFont(size, mono === 'number' ? 'usage' : mono) : mono ? Font.regularMonospacedSystemFont(size) : medium ? Font.mediumSystemFont(size) : Font.systemFont(size));
   if (centered === 'right') ctx.setTextAlignedRight(); else if (centered) ctx.setTextAlignedCenter(); else ctx.setTextAlignedLeft();
   ctx.drawTextInRect(value, new Rect(x, y, width, height));
 }
@@ -1232,10 +1232,18 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
   }
 }
 
-function drawCombinedMetric(ctx, metric, label, daily, x, width, detailRow) {
+function drawCombinedMetric(ctx, metric, label, daily, x, width) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  const titleSize = Math.min(UF.titleFontSize || 11, width / Math.max(1, title.length));
-  text(ctx, title, x, 10, width, 15, titleSize, UF.text, false, false, true);
+  const todayValue = formatMB(daily, 'daily').replace(/(MB|GB)$/, ' $1');
+  const stampLimit = width * 0.55, stampLabel = 7;
+  const todaySize = Math.min(UF.todayFontSize, (stampLimit - 26) / Math.max(1, numberWidth(todayValue, 1, 'today')));
+  const stampWidth = 26 + numberWidth(todayValue, todaySize, 'today'), stampX = x + width - stampWidth;
+  const titleWidth = stampX - x - 5;
+  const titleSize = Math.min(UF.titleFontSize || 11, titleWidth / Math.max(1, title.length));
+  text(ctx, title, x, 13, titleWidth, 16, titleSize, UF.text, false, false, true);
+  roundedRect(ctx, stampX, 9, stampWidth, 18, 5, UF.todayBg);
+  text(ctx, '今日', stampX + 4, 16, 14, 11, stampLabel, UF.muted);
+  text(ctx, todayValue, stampX + 22, 23 - todaySize, stampWidth - 26, 18, todaySize, UF.text, 'today');
   const used = metric ? metric.used / 1024 : null;
   const primary = used == null ? '—' : used > 0 && used < 0.01 ? '<0.01' : used.toFixed(2);
   const quota = metric ? metric.total == null ? ' / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
@@ -1244,10 +1252,10 @@ function drawCombinedMetric(ctx, metric, label, daily, x, width, detailRow) {
   const primarySize = Math.min(UF.usageFontSize, (width - numberWidth(suffix, quotaSize, 'total') - 2)
     / Math.max(1, numberWidth(primary, 1, 'usage')));
   const valueWidth = numberWidth(primary, primarySize, 'usage');
-  text(ctx, primary, x, 25, valueWidth + 2, 29, primarySize, UF.text, 'number');
-  if (suffix) text(ctx, suffix, x + valueWidth + 2, 25 + primarySize - quotaSize,
+  text(ctx, primary, x, 31, valueWidth + 2, 29, primarySize, UF.text, 'number');
+  if (suffix) text(ctx, suffix, x + valueWidth + 2, 31 + primarySize - quotaSize,
     width - valueWidth - 2, 17, quotaSize, UF.muted, 'total');
-  const trackY = 55, trackH = 3;
+  const trackY = 63, trackH = 3;
   roundedRect(ctx, x, trackY, width, trackH, 1.5, UF.track);
   const c = metric && metric.composition;
   if (metric && metric.total > 0 && metric.used > 0) {
@@ -1258,21 +1266,15 @@ function drawCombinedMetric(ctx, metric, label, daily, x, width, detailRow) {
       if (c.vice > 0) { ctx.setFillColor(new Color(UF.purple)); ctx.fillRect(new Rect(x + c.main * scale, trackY, c.vice * scale, trackH)); }
     } else if (!c) roundedRect(ctx, x, trackY, metric.used * scale, trackH, 1.5, UF.blue);
   }
-  if (c && !c.complete) text(ctx, '明细未确认', x, 61, width, 10, 7, UF.warning);
+  if (c && !c.complete) text(ctx, '明细未确认', x, 67, width, 9, 6.5, UF.warning);
   else if (c && c.main > 0) {
     const half = width / 2;
     for (const [index, name, value, color] of [[0, '主', c.main, UF.blue], [1, '副', c.vice, UF.purple]]) {
-      roundedRect(ctx, x + index * half, 64, 2.5, 2.5, 1.25, color);
-      text(ctx, `${name} ${formatMB(value).replace(/(MB|GB)$/, ' $1')}`, x + index * half + 5, 61,
-        half - 5, 11, Math.min(7.5, UF.totalFontSize), UF.muted);
+      roundedRect(ctx, x + index * half, 69, 2, 2, 1, color);
+      text(ctx, `${name} ${formatMB(value).replace(/(MB|GB)$/, ' $1')}`, x + index * half + 4, 67,
+        half - 4, 9, 6.5, UF.muted);
     }
   }
-  const dailyY = detailRow ? 73 : 65;
-  roundedRect(ctx, x, dailyY - 1, width, 22, 6, UF.todayBg);
-  text(ctx, '今日', x + 6, dailyY + 5, 18, 13, 9, UF.muted);
-  const todayValue = formatMB(daily, 'daily').replace(/(MB|GB)$/, ' $1');
-  const size = Math.min(14, UF.usageFontSize, (width - 34) / Math.max(1, numberWidth(todayValue, 1, 'usage')));
-  text(ctx, todayValue, x + 28, dailyY + 1, width - 34, 20, size, UF.text, 'number');
 }
 
 function drawCompactChart(ctx, slots, title, x, y, width) {
@@ -1281,7 +1283,7 @@ function drawCompactChart(ctx, slots, title, x, y, width) {
   const peakLabel = sampled.length ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
   text(ctx, title, x, y - 10, width * 0.55, 10, 7.5, UF.muted);
   text(ctx, `↑ ${peakLabel}`, x + width * 0.55, y - 10, width * 0.45, 10, 7, UF.muted, false, 'right');
-  const bottomY = 132;
+  const bottomY = 130;
   const unit = width / slots.reduce((n, d) => n + (d.weight || 1), 0), chartH = bottomY - y;
   let offset = 0;
   slots.forEach(slot => {
@@ -1332,13 +1334,12 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const now = Date.now();
   const buckets = medium && today ? todayBuckets(result.history, now) : [];
   if (combined) {
-    const col = (width - 2 * pad - 20) / 2, rightX = pad + col + 20;
-    const detailRow = [metrics.left, metrics.right].some(metric => metric && metric.composition
-      && (!metric.composition.complete || metric.composition.main > 0));
-    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], pad, col, detailRow);
-    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, detailRow);
-    const chartY = detailRow ? 106 : 98;
-    drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', pad, chartY, col);
+    const leftX = pad + 6, col = (width - 2 * leftX - 12) / 2, rightX = leftX + col + 12;
+    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col);
+    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col);
+    // 下半双图直接使用整卡背景，靠12点留白和列对齐分区。
+    const chartY = 98;
+    drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', leftX, chartY, col);
     const month = monthlyReport(result.history, now);
     const days = month.days.map((d, index) => ({ ...d, samples: d.intervals,
       label: [0, 9, 19, month.days.length - 1].includes(index) ? String(index + 1) : '' }));
@@ -1505,9 +1506,9 @@ function createWidgetClass(DmYY) {
       if (Object.prototype.hasOwnProperty.call(this.settings, 'displayMode')) {
         delete this.settings.displayMode; changed = true;
       }
-      for (const kind of ['usage', 'total']) {
+      for (const kind of ['usage', 'total', 'today']) {
         const key = kind + 'Font';
-        const font = normalizedNumberFont(this.settings[key] || this.settings.numberFont, UF_DEFAULTS[key]);
+        const font = normalizedNumberFont(this.settings[key] || (kind !== 'today' && this.settings.numberFont), UF_DEFAULTS[key]);
         if (this.settings[key] !== font) { this.settings[key] = font; changed = true; }
       }
       // 只迁移上一版完整默认组合；用户已改过任一项时保留整组选择。
@@ -1549,7 +1550,7 @@ function createWidgetClass(DmYY) {
       UF.crossDayLimitMB = Number.isFinite(crossLimit) && crossLimit >= 0 && crossLimit <= 1024 ? crossLimit : UF_DEFAULTS.crossDayLimitMB;
       applyTheme(this.settings);
       UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
-      for (const kind of ['usage', 'total']) {
+      for (const kind of ['usage', 'total', 'today']) {
         UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
         UF[kind + 'FontSize'] = normalizedFontSize(this.settings[kind + 'FontSize'], kind);
       }
@@ -1824,18 +1825,18 @@ function createWidgetClass(DmYY) {
     }
 
     async fontSettings() {
-      const groups = [['usage', '用量文字', 12, 28], ['total', '总量与百分比', 6, 14]];
+      const groups = [['usage', '用量文字', 12, 28], ['total', '总量与百分比', 6, 14], ['today', '今日用量（综合中号）', 6, 14]];
       const sections = groups.map(([kind, title, min, max]) => ({ title, menu: [
         { name: kind + 'Font', val: kind + 'Font', title: '字体', type: 'select',
           options: Object.keys(UF_NUMBER_FONTS), defaultValue: this.settings[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },
         { name: kind + 'FontSize', val: kind + 'FontSize', title: '文字大小', type: 'input',
           defaultValue: String(normalizedFontSize(this.settings[kind + 'FontSize'], kind)),
-          desc: `小号、中号共用；输入 ${min}—${max}，支持小数；内容过宽时自动缩小`,
+          desc: `${kind === 'today' ? '综合中号标题右侧' : '小号、中号共用'}；输入 ${min}—${max}，支持小数；内容过宽时自动缩小`,
           icon: { name: 'textformat.size', color: '#007AFF' },
           onClick: async (_, __, view) => {
             const key = kind + 'FontSize';
             const a = new Alert(); a.title = title + '大小';
-            a.message = `小号、中号共用。请输入 ${min}—${max} 之间的字号，支持小数；内容过宽时自动缩小。`;
+            a.message = `${kind === 'today' ? '综合中号标题右侧今日用量。' : '小号、中号共用。'}请输入 ${min}—${max} 之间的字号，支持小数；内容过宽时自动缩小。`;
             a.addTextField(String(UF_DEFAULTS[key]), String(normalizedFontSize(this.settings[key], kind)));
             a.addAction('保存'); a.addCancelAction('取消');
             if (await a.presentAlert() < 0) return;

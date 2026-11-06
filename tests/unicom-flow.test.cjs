@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../scriptable/UnicomFlow.js'), 'utf8');
-const load = new vm.Script('(async () => {' + source + '\nreturn {widgetHourSlots, refreshDiagnostics, migrateSmallCrossDays, smallCrossDayTime, previewHTML, refreshRecords, queryDeadline, reusableHistory, refresh, storage, makeWidget, widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
+const load = new vm.Script('(async () => {' + source + '\nreturn {UF, widgetHourSlots, refreshDiagnostics, migrateSmallCrossDays, smallCrossDayTime, previewHTML, refreshRecords, queryDeadline, reusableHistory, refresh, storage, makeWidget, widgetMode, formatGB, todayPackageUsage, yearlyReport, cardDelta, monthlyReport, hourlyReport, statisticsReports, statisticsHTML, parsePackages, megabytes, formatMB, updateHistory, todayBuckets, sessionTag, memberStructure, renderImage, applyTheme, displayMetrics, sharedComposition, createWidgetClass, validateUpdateSource, installUpdate, main};})()');
 
 function fixture() {
   return { code: '0000', resources: [{ type: 'flow', details: [
@@ -656,11 +656,11 @@ function distributionFixture() {
   // 所有小时标签、竖线和柱子共用同一格的中心点，不再为 23 点单独偏移。
   const aligned=visual.renderImage({history,stale:false},true,338,158);
   assert.ok(aligned.includes('主 1.2 GB')); assert.ok(aligned.includes('副 2.0 GB'));
-  const sharedSegments=[...aligned.matchAll(/<rect x="([0-9.]+)" y="55" width="([0-9.]+)" height="3" fill="#(?:0A94FF|8A73FF)"/g)];
+  const sharedSegments=[...aligned.matchAll(/<rect x="([0-9.]+)" y="63" width="([0-9.]+)" height="3" fill="#(?:0A94FF|8A73FF)"/g)];
   assert.equal(sharedSegments.length,2);
-  assert.ok(Math.abs(Number(sharedSegments[0][2])-146*1.2/120)<1e-8);
-  assert.ok(Math.abs(Number(sharedSegments[1][2])-146*2.02/120)<1e-8);
-  assert.equal(Number(sharedSegments[0][1]),179);
+  assert.ok(Math.abs(Number(sharedSegments[0][2])-144*1.2/120)<1e-8);
+  assert.ok(Math.abs(Number(sharedSegments[1][2])-144*2.02/120)<1e-8);
+  assert.equal(Number(sharedSegments[0][1]),175);
   assert.ok(Math.abs(Number(sharedSegments[0][1])+Number(sharedSegments[0][2])-Number(sharedSegments[1][1]))<1e-8);
   assert.ok(aligned.includes('>8.81</text>'));assert.ok(aligned.includes(' / 80 GB'));
   assert.ok(aligned.includes('>今日</text>'));assert.ok(!aligned.includes('今日已用'));
@@ -668,14 +668,14 @@ function distributionFixture() {
   for (const [used,total,main,vice,colored] of [[150,120,50,100,true],[0,120,0,0,false],[12,null,4,8,false],[12,120,4,7,false]]) {
     const edgeData={...previewData,packages:previewData.packages.map(p=>p.shared?{...p,used,total,members:[{id:'a',role:'主卡',used:main},{id:'b',role:'副卡',used:vice}]}:p),members:[]};
     const edgeSvg=visual.renderImage({history:{...history,data:edgeData},stale:false},true,338,158);
-    const bars=[...edgeSvg.matchAll(/<rect x="([0-9.]+)" y="55" width="([0-9.]+)" height="3" fill="#(?:0A94FF|8A73FF)"/g)];
+    const bars=[...edgeSvg.matchAll(/<rect x="([0-9.]+)" y="63" width="([0-9.]+)" height="3" fill="#(?:0A94FF|8A73FF)"/g)];
     assert.equal(bars.length,colored?2:0);
-    for(const bar of bars) { assert.ok(Number(bar[1])>=179-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=325+1e-8); }
+    for(const bar of bars) { assert.ok(Number(bar[1])>=175-1e-8); assert.ok(Number(bar[1])+Number(bar[2])<=319+1e-8); }
   }
 
   const viceOnlyData={...previewData,at:visualAt,packages:previewData.packages.map(p=>p.shared?{...p,members:[{id:'a',role:'主卡',used:0},{id:'b',role:'副卡',used:p.used}]}:p),members:[]};
   const viceOnly=visual.renderImage({history:{...history,data:viceOnlyData},stale:false},true,338,158);
-  assert.ok(/x="179" y="55" width="[0-9.]+" height="3" fill="#8A73FF"/.test(viceOnly));
+  assert.ok(/x="175" y="63" width="[0-9.]+" height="3" fill="#8A73FF"/.test(viceOnly));
   fs.writeFileSync(output+'/small-zero.svg',visual.renderImage({history:{...history,data:viceOnlyData},stale:false},false,158,158));
   fs.writeFileSync(output+'/medium-zero.svg',viceOnly);
   assert.ok(!viceOnly.includes('NaN'));assert.ok(!viceOnly.includes('主 0MB'));assert.ok(!viceOnly.includes('副 3.2GB'));
@@ -752,14 +752,30 @@ function distributionFixture() {
   }
   assert.equal(api.todayPackageUsage(designHistory,api.displayMetrics(designHistory.data).leftIds,designAt),386);
   assert.ok(Math.abs(api.todayPackageUsage(designHistory,api.displayMetrics(designHistory.data).rightIds,designAt)-1.28*1024)<1e-8);
+  // 今日字体独立选择，月已用和总量仍使用原有菜单值。
+  for(const [font,family,weight] of [['系统 Regular','sans-serif',400],['系统 Medium','sans-serif',500],['SF Mono Regular','Menlo,monospace',400],['SF Mono Medium','Menlo,monospace',500],['Menlo Regular','Menlo-Regular',400]]){
+    designVisual.UF.todayFont=font;designVisual.UF.todayFontSize=8.5;
+    const image=designVisual.renderImage({history:designHistory,stale:false},true,338,158);
+    assert.ok(image.includes(`font-family="${family}" font-weight="${weight}" font-size="8.5">386 MB</text>`));
+    assert.ok(image.includes('font-family="Menlo,monospace" font-weight="500" font-size="25">8.81</text>'));
+    assert.ok(image.includes('font-family="sans-serif" font-weight="500" font-size="11"> / 80 GB</text>'));
+  }
+  designVisual.UF.todayFont='Menlo Regular';designVisual.UF.todayFontSize=14;
+  const wideToday=designVisual.renderImage({history:designHistory,stale:false},true,292,141);
+  assert.ok(Number(wideToday.match(/font-size="([0-9.]+)">386 MB<\/text>/)[1])<14);
+  assert.equal(designVisual.UF.todayFontSize,14); // 缩放不改保存的字号。
+  designVisual.UF.todayFont='系统 Medium';designVisual.UF.todayFontSize=9.5;
   for(const theme of ['黑色','白色']){
     designVisual.applyTheme({theme});
     const normalImage=designVisual.renderImage({history:designHistory,stale:false},true,338,158);
     assert.ok(!normalImage.includes('00–06'));assert.ok(!normalImage.includes('6.4 MB'));assert.ok(normalImage.includes('>07</text>'));assert.ok(normalImage.includes('386 MB'));assert.ok(normalImage.includes('1.3 GB'));
     assert.ok(!/>[^<]*%[^<]*<\/text>/.test(normalImage));
     const todayRow=normalImage.match(/<text x="([0-9.]+)"[^>]*>今日<\/text>/),dailyRow=normalImage.match(/<text x="([0-9.]+)"[^>]*>386 MB<\/text>/);
-    assert.ok(todayRow&&dailyRow);assert.equal(Number(dailyRow[1])-Number(todayRow[1]),22); // 标签和值紧邻。
-    assert.ok(normalImage.includes(`fill="${theme==='白色'?'#F0F3F7':'#28282D'}"`));
+    assert.ok(todayRow&&dailyRow);assert.equal(Number(dailyRow[1])-Number(todayRow[1]),18); // 标签和值紧邻。
+    assert.ok(normalImage.includes(`fill="${theme==='白色'?'#E6EDF6':'#32323A'}"`));
+    const chartPanels=[...normalImage.matchAll(/<rect x="[0-9.]+" y="79" width="312" height="64" rx="9"/g)];
+    assert.equal(chartPanels.length,0); // 图表不套底板，仅保留今日胶囊。
+    assert.ok(!/y="6"[^>]*height="70"/.test(normalImage)); // 上方两列不套底板。
     assert.ok(!normalImage.includes('主 0 MB'));assert.ok(!normalImage.includes('副 3.2 GB'));assert.ok(!normalImage.includes('今日分类未确认'));
     const todayMarker=[...normalImage.matchAll(/<rect x="[0-9.]+" y="([0-9.]+)" width="2" height="2" rx="1" ry="1"/g)];
     assert.equal(todayMarker.length,0); // 月图不再绘制今日黑点标记。
@@ -774,26 +790,26 @@ function distributionFixture() {
   const monthWidget=noonVisual.renderImage({history:{...cardCross,events:[]},stale:false},true,338,158,'month');
   assert.ok(monthWidget.includes('>本月每日</text>'));assert.ok(monthWidget.includes('>今日小时</text>'));
   assert.ok(monthWidget.includes('>主卡</text>'));assert.ok(monthWidget.includes('>副卡</text>'));assert.ok(!monthWidget.includes('↻'));
-  const day3x=179+(2+0.5)*(146/30), dayWidth=Math.min(146/30-1.5,146/30*0.7);
+  const day3x=175+(2+0.5)*(144/30), dayWidth=Math.min(144/30-1.5,144/30*0.7);
   const hasRect=(svg,x,y,width,height,color)=>[...svg.matchAll(/<rect x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" height="([0-9.]+)" fill="(#[A-Fa-f0-9]+)"/g)]
     .some(row=>row[5]===color && [x,y,width,height].every((value,index)=>Math.abs(Number(row[index+1])-value)<1e-8));
-  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,132-26*60/90,dayWidth,26*60/90,'#0A94FF'));
-  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,106,dayWidth,26*30/90,'#8A73FF'));
+  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,130-32*60/90,dayWidth,32*60/90,'#0A94FF'));
+  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,98,dayWidth,32*30/90,'#8A73FF'));
   for(const day of [1,10,20,30]) {
-    const match=monthWidget.match(new RegExp('<text x="([0-9.]+)" y="141"[^>]*>'+day+'</text>'));
-    const halfLabel=Math.max(146/30,14)/2;
-    assert.ok(match);assert.ok(Math.abs(Number(match[1])-(179+Math.min(146-halfLabel,Math.max(halfLabel,(day-0.5)*146/30))))<1e-8);
+    const match=monthWidget.match(new RegExp('<text x="([0-9.]+)" y="139"[^>]*>'+day+'</text>'));
+    const halfLabel=Math.max(144/30,14)/2;
+    assert.ok(match);assert.ok(Math.abs(Number(match[1])-(175+Math.min(144-halfLabel,Math.max(halfLabel,(day-0.5)*144/30))))<1e-8);
   }
   const monthZero=noonVisual.renderImage({history:zero,stale:false},true,338,158,'month');
-  const zeroDay4x=179+3.5*(146/30)-dayWidth/2;
-  assert.ok(hasRect(monthZero,zeroDay4x,131,dayWidth,1,'#454548'));
-  const futureDay5x=179+4.5*(146/30)-dayWidth/2;
-  assert.ok(!hasRect(monthZero,futureDay5x,131,dayWidth,1,'#454548'));
+  const zeroDay4x=175+3.5*(144/30)-dayWidth/2;
+  assert.ok(hasRect(monthZero,zeroDay4x,129,dayWidth,1,'#454548'));
+  const futureDay5x=175+4.5*(144/30)-dayWidth/2;
+  assert.ok(!hasRect(monthZero,futureDay5x,129,dayWidth,1,'#454548'));
   for(const [time,count] of [[new Date(2026,11,3,12).getTime(),31],[new Date(2028,1,3,12).getTime(),29]]) {
     class CalendarDate extends Date {static now(){return time;}}
     const calendarVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:CalendarDate,Color,Rect,Size,Path,DrawContext,Font});
     const image=calendarVisual.renderImage({history:zero,stale:false},true,338,158,'month');
-    assert.equal([...image.matchAll(/width="0.5" height="34"/g)].length,9);assert.ok(image.includes('>'+count+'</text>'));
+    assert.equal([...image.matchAll(/width="0.5" height="32"/g)].length,9);assert.ok(image.includes('>'+count+'</text>'));
   }
   fs.writeFileSync(`${output}/medium-month-chart.svg`,monthWidget);
   const emptyHours={...history,data:{...history.data,at:fixedNoon},events:[]};
@@ -823,7 +839,7 @@ function distributionFixture() {
     assert.ok(taller.includes('y="146.5" text-anchor="start"')); // 图例固定底部，不随图表上移
     assert.ok(taller.includes('y="137" text-anchor="middle"')); // 时间／日期刻度未下移
   }
-  assert.ok(monthWidget.includes('y="106" width="0.5" height="26"')); // 有套餐逐卡明细时不压住文字
+  assert.ok(monthWidget.includes('y="98" width="0.5" height="32"')); // 有套餐逐卡明细时不压住文字
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
@@ -1305,7 +1321,7 @@ function distributionFixture() {
   const fontAction=instance._menuActions.flatMap(group=>group.menu).find(item=>item.name==='flowFonts');
   assert.ok(fontAction);
   const typography=await fontAction.onClick();
-  assert.equal(typography.options.length,3);
+  assert.equal(typography.options.length,4);
   for(const [i,kind] of ['usage','total'].entries()) {
     const menu=typography.options[i].menu;
     assert.equal(menu[0].val,kind+'Font');
@@ -1313,17 +1329,34 @@ function distributionFixture() {
     assert.equal(menu[1].val,kind+'FontSize');
     assert.equal(menu[1].defaultValue,kind==='usage'?'25':'11');
   }
-  const titleMenu=typography.options[2].menu[0];assert.equal(titleMenu.val,'titleFontSize');
+  const todayFontMenu=typography.options[2].menu;
+  assert.equal(todayFontMenu[0].val,'todayFont');assert.equal(todayFontMenu[0].defaultValue,'系统 Medium');
+  assert.equal(todayFontMenu[1].val,'todayFontSize');assert.equal(todayFontMenu[1].defaultValue,'9.5');
+  assert.ok(todayFontMenu[1].desc.includes('综合中号标题右侧'));
+  const previousUsage=instance.settings.usageFontSize,previousTotal=instance.settings.totalFontSize;
+  fontSizeInput='10.5';await todayFontMenu[1].onClick();
+  assert.equal(instance.settings.todayFontSize,'10.5');
+  assert.equal(instance.settings.usageFontSize,previousUsage);assert.equal(instance.settings.totalFontSize,previousTotal);
+  for(const invalid of ['','abc','5.9','14.1']){fontSizeInput=invalid;await todayFontMenu[1].onClick();assert.equal(instance.settings.todayFontSize,'10.5');}
+  alertChoices.push(-1);fontSizeInput='8';await todayFontMenu[1].onClick();assert.equal(instance.settings.todayFontSize,'10.5');
+  instance.settings.todayFont='Menlo Regular';instance.applySettings();
+  assert.equal(appApi.UF.todayFont,'Menlo Regular');assert.equal(appApi.UF.todayFontSize,10.5);
+  instance.settings.todayFont='未知字体';instance.settings.todayFontSize='999';instance.applySettings();
+  assert.equal(appApi.UF.todayFont,'系统 Medium');assert.equal(appApi.UF.todayFontSize,9.5);
+  instance.settings.todayFont='系统 Medium';instance.settings.todayFontSize='9.5';
+  const titleMenu=typography.options[3].menu[0];assert.equal(titleMenu.val,'titleFontSize');
   fontSizeInput='12';await titleMenu.onClick();assert.equal(instance.settings.titleFontSize,'12');
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    assert.match(w.backgroundImage,/font-size="12">数据流量·通用<\/text>/);
+    if(family==='small') assert.match(w.backgroundImage,/font-size="12">数据流量·通用<\/text>/);
+    else assert.ok(Number(w.backgroundImage.match(/font-size="([0-9.]+)">数据流量·通用<\/text>/)[1])<=12);
   }
   fontSizeInput='99';await titleMenu.onClick();assert.equal(instance.settings.titleFontSize,'12');assert.equal(alerts.at(-1).title,'未保存');
   fontSizeInput='';await titleMenu.onClick();assert.equal(instance.settings.titleFontSize,undefined);
   for(const family of ['small','medium']) {
     const w=family==='small'?await instance.renderSmall():await instance.renderMedium();
-    assert.ok(w.backgroundImage.includes(`font-size="${family==='small'?10:11}">数据流量·通用</text>`));
+    const titleSize=Number(w.backgroundImage.match(/font-size="([0-9.]+)">数据流量·通用<\/text>/)[1]);
+    assert.ok(titleSize<=(family==='small'?10:11)&&titleSize>0);
   }
   assert.equal(instance.settings.usageFont,'SF Mono Medium');
   assert.equal(instance.settings.totalFont,'系统 Medium');
@@ -1358,6 +1391,9 @@ function distributionFixture() {
   const custom={usageFont:'Menlo Regular',totalFont:'系统 Regular',usageFontSize:'23',totalFontSize:'12'};
   const preserved=presetInstance(custom);
   for(const key of Object.keys(custom)) assert.equal(preserved.settings[key],custom[key]);
+  const preservedToday=presetInstance({...custom,todayFont:'SF Mono Regular',todayFontSize:'10.5'});
+  assert.equal(preservedToday.settings.todayFont,'SF Mono Regular');assert.equal(preservedToday.settings.todayFontSize,'10.5');
+  for(const key of Object.keys(custom)) assert.equal(preservedToday.settings[key],custom[key]);
   const once=presetInstance({usageFont:'SF Mono Regular',totalFont:'SF Mono Regular',usageFontSize:'22',totalFontSize:'10',mediumTypographyDefaultsApplied:true});
   assert.equal(once.settings.usageFont,'SF Mono Regular');assert.equal(once.settings.usageFontSize,'22');
   fontSizeInput='25.5';await typography.options[0].menu[1].onClick();

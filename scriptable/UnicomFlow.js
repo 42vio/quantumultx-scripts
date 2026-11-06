@@ -1281,21 +1281,23 @@ function drawCompactChart(ctx, slots, title, x, y, width) {
   const peakLabel = sampled.length ? formatMB(peak, 'daily').replace(/(MB|GB)$/, ' $1') : '—';
   text(ctx, title, x, y - 10, width * 0.55, 10, 7.5, UF.muted);
   text(ctx, `↑ ${peakLabel}`, x + width * 0.55, y - 10, width * 0.45, 10, 7, UF.muted, false, 'right');
-  const unit = width / slots.reduce((n, d) => n + (d.weight || 1), 0), chartH = 128 - y;
+  const bottomY = 132;
+  const unit = width / slots.reduce((n, d) => n + (d.weight || 1), 0), chartH = bottomY - y;
   let offset = 0;
   slots.forEach(slot => {
     const cell = unit * (slot.weight || 1), center = x + offset + cell / 2;
     const barWidth = Math.max(1, Math.min(cell - 1.5, unit * 0.7));
     if (slot.label) {
       ctx.setFillColor(new Color(UF.gridMinor)); ctx.fillRect(new Rect(center - 0.25, y, 0.5, chartH));
-      const labelWidth = Math.min(width, Math.max(cell, slot.label.length * 4));
+      // 原先双位数仅分到8点宽，真机等宽字会截掉末位；额外预留左右空间。
+      const labelWidth = Math.min(width, Math.max(cell, numberWidth(slot.label, 7, 'usage'), 14));
       const labelX = Math.min(x + width - labelWidth, Math.max(x, center - labelWidth / 2));
-      text(ctx, slot.label, labelX, 130, labelWidth, 9, 7, UF.muted, true, true);
+      text(ctx, slot.label, labelX, bottomY + 2, labelWidth, 11, 7, UF.muted, true, true);
     }
     if (!slot.future && slot.samples && slot.mb != null) {
       if (slot.mb > 0) {
         const h = slot.mb / max * chartH;
-        let bottom = 128;
+        let bottom = bottomY;
         const parts = eventParts(slot);
         for (const [key, color] of [['mainMB', UF.blue], ['viceMB', UF.purple], ['unknownMB', UF.warning]]) {
           if (parts[key] <= 0) continue;
@@ -1303,9 +1305,8 @@ function drawCompactChart(ctx, slots, title, x, y, width) {
           bottom -= segment; ctx.setFillColor(new Color(color));
           ctx.fillRect(new Rect(center - barWidth / 2, bottom, barWidth, segment));
         }
-      } else { ctx.setFillColor(new Color(UF.track)); ctx.fillRect(new Rect(center - barWidth / 2, 127, barWidth, 1)); }
+      } else { ctx.setFillColor(new Color(UF.track)); ctx.fillRect(new Rect(center - barWidth / 2, bottomY - 1, barWidth, 1)); }
     }
-    if (slot.current) roundedRect(ctx, center - 1, y - 3, 2, 2, 1, UF.muted);
     offset += cell;
   });
 }
@@ -1339,7 +1340,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
     const chartY = detailRow ? 106 : 98;
     drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', pad, chartY, col);
     const month = monthlyReport(result.history, now);
-    const days = month.days.map((d, index) => ({ ...d, samples: d.intervals, current: d.key === month.today,
+    const days = month.days.map((d, index) => ({ ...d, samples: d.intervals,
       label: [0, 9, 19, month.days.length - 1].includes(index) ? String(index + 1) : '' }));
     drawCompactChart(ctx, days, '本月每日', rightX, chartY, col);
   } else if (medium) {
@@ -1394,14 +1395,16 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const label = medium ? status ? `${time} · ${status}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`
     : compactStatus ? `${time} · ${compactStatus}` : `${result.manualRefresh ? '已刷新' : '更新'} ${time}`;
   // 图例解释整张卡片，置于底部右侧；左侧预留更新时间及异常提示。
-  const footerY = height - (medium ? 18 : 15);
+  // 综合中号底部两端各向内收10点、下移4点，避开圆角并把高度让给双图。
+  const footerY = height - (combined ? 14 : medium ? 18 : 15);
+  const footerX = pad + (combined ? 12 : 2);
+  const legendX = width - pad - (combined ? 64 : 54);
   const dailyHint = (today || combined) && !status && !daily.some(value => value != null)
     ? (todayBuckets(result.history, now).some(b => b.samples) ? '今日分类未确认' : '今日待采样') : '';
-  text(ctx, dailyHint ? `${dailyHint} · ${label}` : label, pad + 2, footerY,
-    width - 2 * pad - 4 - (medium ? 62 : 0), 9, 6.5,
+  text(ctx, dailyHint ? `${dailyHint} · ${label}` : label, footerX, footerY,
+    medium ? legendX - footerX - 10 : width - 2 * pad - 4, 9, 6.5,
     result.stale || data.warnings.length || metrics.omitted || incomplete ? UF.warning : UF.muted);
   if (medium) {
-    const legendX = width - pad - 54;
     [{ color: UF.blue, caption: '主卡' }, { color: UF.purple, caption: '副卡' }].forEach(({ color, caption }, index) => {
       const x = legendX + index * 30;
       roundedRect(ctx, x, footerY + 3, 2.5, 2.5, 1.25, color);

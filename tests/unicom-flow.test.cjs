@@ -685,11 +685,12 @@ function distributionFixture() {
   assert.ok(visual.renderImage({history:{...history,data:incompleteShared},stale:false},true,338,158).includes('逐卡明细未补全'));
   assert.ok(aligned.includes('共享流量'));assert.ok(!aligned.includes('蓝主 / 紫副'));
   // 整卡图例在底部右侧横排，与更新时间对齐。
-  const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(146.5)" text-anchor="start"[^>]*>[主副]卡<\/text>/g)];
+  const dailyLegends=[...aligned.matchAll(/<text x="([0-9.]+)" y="(150.5)" text-anchor="start"[^>]*>[主副]卡<\/text>/g)];
   assert.equal(dailyLegends.length,2);assert.equal(Number(dailyLegends[1][1])-Number(dailyLegends[0][1]),30);
-  assert.ok(Number(dailyLegends[0][1])>270);assert.equal(Number(dailyLegends[0][2]),146.5);assert.equal(Number(dailyLegends[1][2]),146.5);
+  assert.equal(Number(dailyLegends[0][1]),266);assert.equal(Number(dailyLegends[0][2]),150.5);assert.equal(Number(dailyLegends[1][2]),150.5);
   const footerTime=aligned.match(/<text [^>]*y="([0-9.]+)"[^>]*>[^<]*更新 [^<]+<\/text>/);
-  assert.ok(footerTime);assert.equal(Number(footerTime[1]),146.5);
+  assert.ok(footerTime);assert.equal(Number(footerTime[1]),150.5);
+  assert.ok(/<text x="25" y="150.5"[^>]*>[^<]*更新 /.test(aligned));
   const alignedHours=visual.renderImage({history,stale:false},true,338,158,'today');
   const step=(338-26)/24;
   for(const hour of [0,6,12,18,23]) {
@@ -760,6 +761,8 @@ function distributionFixture() {
     assert.ok(todayRow&&dailyRow);assert.equal(Number(dailyRow[1])-Number(todayRow[1]),22); // 标签和值紧邻。
     assert.ok(normalImage.includes(`fill="${theme==='白色'?'#F0F3F7':'#28282D'}"`));
     assert.ok(!normalImage.includes('主 0 MB'));assert.ok(!normalImage.includes('副 3.2 GB'));assert.ok(!normalImage.includes('今日分类未确认'));
+    const todayMarker=[...normalImage.matchAll(/<rect x="[0-9.]+" y="([0-9.]+)" width="2" height="2" rx="1" ry="1"/g)];
+    assert.equal(todayMarker.length,0); // 月图不再绘制今日黑点标记。
     fs.writeFileSync(`${output}/medium-combined-${theme==='白色'?'light':'dark'}.svg`,normalImage);
   }
   const activeData={...previewData,at:designAt,packages:previewData.packages.map(p=>p.shared?p:{...p,used:p.total})};
@@ -774,23 +777,23 @@ function distributionFixture() {
   const day3x=179+(2+0.5)*(146/30), dayWidth=Math.min(146/30-1.5,146/30*0.7);
   const hasRect=(svg,x,y,width,height,color)=>[...svg.matchAll(/<rect x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" height="([0-9.]+)" fill="(#[A-Fa-f0-9]+)"/g)]
     .some(row=>row[5]===color && [x,y,width,height].every((value,index)=>Math.abs(Number(row[index+1])-value)<1e-8));
-  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,128-22*60/90,dayWidth,22*60/90,'#0A94FF'));
-  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,106,dayWidth,22*30/90,'#8A73FF'));
+  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,132-26*60/90,dayWidth,26*60/90,'#0A94FF'));
+  assert.ok(hasRect(monthWidget,day3x-dayWidth/2,106,dayWidth,26*30/90,'#8A73FF'));
   for(const day of [1,10,20,30]) {
-    const match=monthWidget.match(new RegExp('<text x="([0-9.]+)" y="137"[^>]*>'+day+'</text>'));
-    const halfLabel=Math.max(146/30,String(day).length*4)/2;
+    const match=monthWidget.match(new RegExp('<text x="([0-9.]+)" y="141"[^>]*>'+day+'</text>'));
+    const halfLabel=Math.max(146/30,14)/2;
     assert.ok(match);assert.ok(Math.abs(Number(match[1])-(179+Math.min(146-halfLabel,Math.max(halfLabel,(day-0.5)*146/30))))<1e-8);
   }
   const monthZero=noonVisual.renderImage({history:zero,stale:false},true,338,158,'month');
   const zeroDay4x=179+3.5*(146/30)-dayWidth/2;
-  assert.ok(hasRect(monthZero,zeroDay4x,127,dayWidth,1,'#454548'));
+  assert.ok(hasRect(monthZero,zeroDay4x,131,dayWidth,1,'#454548'));
   const futureDay5x=179+4.5*(146/30)-dayWidth/2;
-  assert.ok(!hasRect(monthZero,futureDay5x,127,dayWidth,1,'#454548'));
+  assert.ok(!hasRect(monthZero,futureDay5x,131,dayWidth,1,'#454548'));
   for(const [time,count] of [[new Date(2026,11,3,12).getTime(),31],[new Date(2028,1,3,12).getTime(),29]]) {
     class CalendarDate extends Date {static now(){return time;}}
     const calendarVisual=await load.runInNewContext({UNICOM_FLOW_TEST:true,Date:CalendarDate,Color,Rect,Size,Path,DrawContext,Font});
     const image=calendarVisual.renderImage({history:zero,stale:false},true,338,158,'month');
-    assert.equal([...image.matchAll(/width="0.5" height="30"/g)].length,9);assert.ok(image.includes('>'+count+'</text>'));
+    assert.equal([...image.matchAll(/width="0.5" height="34"/g)].length,9);assert.ok(image.includes('>'+count+'</text>'));
   }
   fs.writeFileSync(`${output}/medium-month-chart.svg`,monthWidget);
   const emptyHours={...history,data:{...history.data,at:fixedNoon},events:[]};
@@ -820,7 +823,7 @@ function distributionFixture() {
     assert.ok(taller.includes('y="146.5" text-anchor="start"')); // 图例固定底部，不随图表上移
     assert.ok(taller.includes('y="137" text-anchor="middle"')); // 时间／日期刻度未下移
   }
-  assert.ok(monthWidget.includes('y="106" width="0.5" height="22"')); // 有套餐逐卡明细时不压住文字
+  assert.ok(monthWidget.includes('y="106" width="0.5" height="26"')); // 有套餐逐卡明细时不压住文字
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
     assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
@@ -844,7 +847,7 @@ function distributionFixture() {
   const zeroMainLegend=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:30,mainMB:0,viceMB:30,unknownMB:0}))},stale:false},true,338,158);
   assert.ok(zeroMainLegend.includes('>主卡</text>')); // 已确认零用量不会留空
   const unevenWidget=noonVisual.renderImage({history:{...cardAtNoon,events:cardAtNoon.events.map(e=>({...e,mb:1030,mainMB:6,viceMB:1024,unknownMB:0}))},stale:false},true,338,158);
-  const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="146.5" text-anchor="start"[^>]*>[主副]卡<\/text>/g)];
+  const unevenLegends=[...unevenWidget.matchAll(/<text x="([0-9.]+)" y="150.5" text-anchor="start"[^>]*>[主副]卡<\/text>/g)];
   assert.equal(unevenLegends.length,2);assert.equal(Number(unevenLegends[1][1])-Number(unevenLegends[0][1]),30);
   assert.ok(unevenWidget.includes('>主卡</text>'));assert.ok(unevenWidget.includes('>副卡</text>'));
   assert.ok(stackedWidget.includes('>主卡</text>'));assert.ok(stackedWidget.includes('>副卡</text>'));

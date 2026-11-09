@@ -1,0 +1,40 @@
+{
+  "id": "42vio.quantumultx-scripts",
+  "name": "42vio 签到脚本",
+  "author": "42vio",
+  "repo": "https://github.com/42vio/quantumultx-scripts",
+  "apps": [
+    {
+      "id": "42vio.sfexpress",
+      "name": "顺丰速运（双手机凭据）",
+      "author": "42vio",
+      "repo": "https://github.com/42vio/quantumultx-scripts",
+      "script": "https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress.js",
+      "descs": [
+        "副手机打开顺丰积分签到页后，刷新本页面，复制本机凭据的完整内容，传给主手机。",
+        "主手机粘贴到副手机凭据并保存，运行签到验证。两台手机各保留一个账号登录，无需每天传输。",
+        "主手机须已保存两个账号的 Web 会话；本页面只补充换票凭据，不新增账号。",
+        "凭据包含登录信息，请勿公开分享。本机凭据请勿修改；不使用副手机凭据时清空该输入框并保存。"
+      ],
+      "keys": ["sfexpress_native_requests", "sfexpress_native_requests_imported"],
+      "settings": [
+        {
+          "id": "sfexpress_native_requests",
+          "name": "本机 App 换票凭据（复制用）",
+          "type": "textarea",
+          "val": "",
+          "rows": 5,
+          "desc": "由捕获脚本自动保存。打开积分签到页后刷新本页面，全选并复制完整 JSON 数组（含最外层方括号），请勿修改。"
+        },
+        {
+          "id": "sfexpress_native_requests_imported",
+          "name": "副手机 App 换票凭据（粘贴到这里）",
+          "type": "textarea",
+          "val": "",
+          "rows": 5,
+          "desc": "仅在主手机填写：粘贴副手机复制的完整内容并保存。更新时替换整个输入框；清空可停止读取此处凭据。"
+        }
+      ]
+    }
+  ]
+}

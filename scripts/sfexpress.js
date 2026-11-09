@@ -20,6 +20,36 @@ function nativeHeader(sample, name) {
   return key === undefined ? '' : headers[key]
 }
 
+function validNativeSample(sample) {
+  const request = sample && sample.request
+  return !!(request &&
+    /^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign(?:\?[^#]*)?$/.test(request.url) &&
+    request.method === 'POST' && typeof request.body === 'string' &&
+    request.headers && typeof request.headers === 'object' && !Array.isArray(request.headers) &&
+    Object.values(request.headers).every(value => typeof value === 'string') && nativeHeader(sample, 'token'))
+}
+
+function importedNativeSamples() {
+  const raw = $prefs.valueForKey('sfexpress_native_requests_imported')
+  if (!raw || !raw.trim()) return []
+  try {
+    if (raw.length > 2 * 1024 * 1024) throw new Error('size')
+    const samples = JSON.parse(raw)
+    if (!Array.isArray(samples) || samples.length > 10 || !samples.every(validNativeSample)) throw new Error('format')
+    // Only retain request fields used for exchange; never accept fetch options from pasted data.
+    return samples.map(sample => ({
+      at: Number.isFinite(sample.at) ? sample.at : 0,
+      request: {
+        url: sample.request.url, method: sample.request.method,
+        headers: sample.request.headers, body: sample.request.body
+      }
+    }))
+  } catch (_) {
+    $notify('顺丰速运', '副手机凭据格式错误，已忽略', '请复制“本机 App 换票凭据”的完整 JSON 数组；继续使用其他已保存会话')
+    return []
+  }
+}
+
 function nativeSamples(accounts) {
   const saved = storedJson('sfexpress_native_requests', [])
   const diagnostic = storedJson('sfexpress_auth_diagnostics_v1', { events: [] })
@@ -27,17 +57,21 @@ function nativeSamples(accounts) {
     ...(Array.isArray(saved) ? saved : []),
     ...accounts.map(account => account.nativeRequest).filter(Boolean),
     ...(Array.isArray(diagnostic.events) ? diagnostic.events.filter(event => event.route === 'universalSign' && event.phase === 'request') : [])
-  ].filter(sample => sample && sample.request &&
-    /^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign(?:\?[^#]*)?$/.test(sample.request.url) &&
-    sample.request.method === 'POST' && typeof sample.request.body === 'string' && nativeHeader(sample, 'token'))
+  ].filter(validNativeSample)
     .sort((a, b) => (b.at || 0) - (a.at || 0))
   const seen = new Set()
-  return candidates.filter(sample => {
+  const unique = sample => {
     const identity = JSON.stringify([nativeHeader(sample, 'token'), nativeHeader(sample, 'deviceid'), sample.request.body])
     if (seen.has(identity)) return false
     seen.add(identity)
     return true
-  }).slice(0, 10)
+  }
+  const local = candidates.filter(unique).slice(0, 10)
+  // Keep room for both phones, even when this phone already has ten newer captures.
+  // Deduplicate against the retained local samples, including repeated bound requests.
+  seen.clear()
+  return [...local, ...importedNativeSamples()]
+    .sort((a, b) => (b.at || 0) - (a.at || 0)).filter(unique)
 }
 
 function addResponseCookies(jar, headers) {

@@ -31,7 +31,7 @@ function harness(initial = {}) {
     console: { log: message => logs.push(message) },
     setTimeout: callback => callback()
   })
-  const source = fs.readFileSync(path.join(root, 'scripts/sfexpress.js'), 'utf8')
+  const source = fs.readFileSync(path.join(root, 'scripts/sfexpress/sfexpress.js'), 'utf8')
   const end = source.lastIndexOf('\nmain().catch(')
   assert.ok(end > 0)
   vm.runInContext(source.slice(0, end) + '\nglobalThis.api = { nativeSamples, renewAccounts, main };', context)
@@ -164,7 +164,7 @@ async function main() {
   assert.equal(invalid.notifications.at(-1)[1], '签到成功 2/2 个账号')
 
   // The BoxJS input IDs are the actual storage keys, with no embedded credentials.
-  const subscription = JSON.parse(fs.readFileSync(path.join(root, 'sfexpress.boxjs.json'), 'utf8'))
+  const subscription = JSON.parse(fs.readFileSync(path.join(root, 'scripts/sfexpress/sfexpress.boxjs.json'), 'utf8'))
   assert.deepEqual(subscription.apps[0].settings.map(setting => setting.id), [nativeKey, importedKey])
   assert.ok(subscription.apps[0].settings.every(setting => setting.val === '' && setting.type === 'textarea'))
   console.log('sfexpress: all tests passed')

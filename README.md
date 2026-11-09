@@ -1,5 +1,7 @@
 # quantumultx-scripts
 
+- [顺丰速运：签到、凭据获取与双手机 BoxJS 使用说明](scripts/sfexpress/README.md)
+
 ## 下班打卡提醒（Quantumult X）
 
 `scripts/attendance-qx.js` 同时负责保存 App 的 `GetAttendData` 查询请求，以及在 17:20 从同一台手机重放该请求、计算下班时间并通知。提醒时间取“上班打卡后 9 小时”和当天 17:30 中较晚的时间。查询请求只保存在 QX 本地偏好设置中；仓库脚本不包含账号、会话或设备标识。`QuantumultX_Cookie.qxrewrite` 已包含该 App 的重写和 MitM 域名，`TaskGallery.json` 已加入 17:20 任务。推送后，在 iPhone QX 更新这两个现有订阅。

@@ -10,8 +10,8 @@ hostname = hrmapp.hitrontech.com, sytgate.jslife.com.cn, mcs-mimp-web.sf-express
 ^https:\/\/sytgate\.jslife\.com\.cn\/core-gateway\/order\/carno\/pay\/info url script-request-body https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/jparking_sign.js
 
 ;顺丰签到：打开积分签到页时保存当前 Web 会话
-^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign(?:\?|$) url script-request-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress.native-cookie.js
-^https:\/\/mcs-mimp-web\.sf-express\.com\/mcs-mimp\/commonPost\/~memberNonactivity~integralSignV2Service~getTodaySign url script-response-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress.cookie.js
+^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign(?:\?|$) url script-request-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress/sfexpress.native-cookie.js
+^https:\/\/mcs-mimp-web\.sf-express\.com\/mcs-mimp\/commonPost\/~memberNonactivity~integralSignV2Service~getTodaySign url script-response-body https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress/sfexpress.cookie.js
 
 ;电信 GetCookie by chavyleung
 ^https:\/\/wapside.189.cn:9001\/api\/home\/homeInfo url script-request-body https://raw.githubusercontent.com/chavyleung/scripts/master/10000/10000.cookie.js

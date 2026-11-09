@@ -9,7 +9,7 @@
       "name": "顺丰速运（双手机凭据）",
       "author": "42vio",
       "repo": "https://github.com/42vio/quantumultx-scripts",
-      "script": "https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress.js",
+      "script": "https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress/sfexpress.js",
       "descs": [
         "副手机打开顺丰积分签到页后，刷新本页面，复制本机凭据的完整内容，传给主手机。",
         "主手机粘贴到副手机凭据并保存，运行签到验证。两台手机各保留一个账号登录，无需每天传输。",

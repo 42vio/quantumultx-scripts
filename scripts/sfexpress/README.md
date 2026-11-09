@@ -1,4 +1,17 @@
-# 顺丰：两台手机保持登录，主手机统一签到
+# 顺丰速运
+
+顺丰签到脚本、凭据获取脚本、BoxJS 配置及使用说明统一放在此目录。
+
+| 文件 | 用途 |
+| --- | --- |
+| [sfexpress.js](sfexpress.js) | 定时签到、领取每日任务，并尝试更新 Web 会话 |
+| [sfexpress.cookie.js](sfexpress.cookie.js) | 打开积分签到页时保存当前账号的 Web 会话 |
+| [sfexpress.native-cookie.js](sfexpress.native-cookie.js) | 捕获 App 换票请求，供后续刷新 Web 会话 |
+| [sfexpress.boxjs.json](sfexpress.boxjs.json) | BoxJS 凭据复制、粘贴页面 |
+
+仓库根目录的 [TaskGallery.json](../../TaskGallery.json) 提供签到任务入口，[QuantumultX_Cookie.qxrewrite](../../QuantumultX_Cookie.qxrewrite) 提供凭据获取规则；两者均引用此目录。测试仍集中在 [tests/sfexpress.test.cjs](../../tests/sfexpress.test.cjs)，在仓库根目录运行 `node tests/sfexpress.test.cjs`。
+
+## 双手机使用方式
 
 两台 iPhone 各保持一个顺丰账号登录，主手机运行两个账号的签到任务。副手机只在获取或更新凭据时开机，不需要每天开机。登录态仍可能自然过期；跨手机换票是否可用，以首次运行结果为准。
 
@@ -6,13 +19,11 @@
 
 主手机需已保存两个账号的 Web 会话（例如已有通知同时显示两个账号）；此功能只为已保存的账号补充 App 换票凭据，不自动新增账号。
 
-两台手机安装 BoxJS，并在 QX 添加本仓库的 Cookie 重写，开启所需 MitM。主手机更新顺丰签到脚本，副手机无需添加定时签到任务。
+两台手机安装 BoxJS，并在 QX 添加本仓库的 Cookie 重写，开启 QX 连接、重写和 MitM。在各自手机安装 QX 证书后，还需在 iPhone“设置 → 通用 → 关于本机 → 证书信任设置”中开启该证书的完全信任，并允许 QX 通知。主手机更新顺丰签到脚本，副手机无需添加定时签到任务。
 
-- Cookie 重写：`https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/QuantumultX_Cookie.qxrewrite`
-- 主手机签到脚本：`https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress.js`
-- BoxJS 订阅：`https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/sfexpress.boxjs.json`
-
-以上地址需要仓库中的对应文件已推送后才会提供新功能；本地改动不会自动更新到手机。
+- [Cookie 重写订阅](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/QuantumultX_Cookie.qxrewrite)
+- [主手机签到脚本](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress/sfexpress.js)
+- [BoxJS 订阅](https://raw.githubusercontent.com/42vio/quantumultx-scripts/main/scripts/sfexpress/sfexpress.boxjs.json)
 
 两台手机在 BoxJS 的“订阅”中添加上述 BoxJS 订阅，进入“顺丰速运（双手机凭据）”。本仓库订阅与其他作者的顺丰订阅使用不同的存储字段，不要混用。
 

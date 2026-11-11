@@ -91,9 +91,14 @@ function mediumTypographyDefaults(settings, layout) {
     values[kind + 'Font'] = normalizedNumberFont(settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
     values[kind + 'FontSize'] = normalizedFontSize(settings[kind + 'FontSize'], kind);
   }
-  // 迁移一次旧版今日视觉大小；保存的是实际字号，绘制时不再使用布局倍数。
-  values.todayFontSize = Math.max(6, Math.min(28,
-    Math.round(values.todayFontSize * (layout === '今日在上' ? 2 : layout === '今日右上角' ? 0.8 : 1) * 100) / 100));
+  // 今日在上采用小号今日的大数字字体；其他布局迁移原今日视觉大小。
+  if (layout === '今日在上') {
+    values.todayFont = values.usageFont;
+    values.todayFontSize = values.usageFontSize;
+  } else {
+    values.todayFontSize = Math.max(6, Math.min(28,
+      Math.round(values.todayFontSize * (layout === '今日右上角' ? 0.8 : 1) * 100) / 100));
+  }
   values.titleFontSize = normalizedTitleSize(settings.titleFontSize);
   return values;
 }
@@ -1214,7 +1219,7 @@ function drawVerticalProgress(ctx, metric, x, y, height, width = 5) {
 
 function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dailyUsed = null) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  const heading = today ? title + ' · 今日' : title;
+  const heading = title;
   const headingWidth = [...heading].reduce((sum,ch) => sum + (/[\u3400-\u9fff]/.test(ch) ? 1 : 0.6),0);
   const headingSize = Math.min(UF.titleFontSize == null ? compact ? 10 : 11 : UF.titleFontSize, width / Math.max(1,headingWidth));
   text(ctx, heading, x, y, width, 16, headingSize, UF.text, false, false, true);
@@ -1236,16 +1241,7 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
   if (today && metric) detail = metric.total == null ? `${formatGB(metric.used)} GB / 不限量` : `${formatGB(metric.used)}/${formatGB(metric.total, true)}GB`;
   const totalParts = detail.match(/^(.*?)(MB|GB)(.*)$/);
   if (today && metric && metric.total != null) {
-    const runs = [formatGB(metric.used), '/', formatGB(metric.total, true), 'GB'];
-    const gap = 2;
-    const size = Math.min(UF.totalFontSize, (textWidth - gap * (runs.length - 1))
-      / Math.max(1, runs.reduce((sum, run) => sum + numberWidth(run, 1, 'total'), 0)));
-    let runX = textX;
-    for (const run of runs) {
-      const runWidth = numberWidth(run, size, 'total');
-      text(ctx, run, runX, y + 44, runWidth + gap, 16, size, UF.muted, 'total');
-      runX += runWidth + gap;
-    }
+    drawTodayMonthSummary(ctx, metric, textX, y + 44, textWidth);
   } else if (totalParts) {
     const gap = 2;
     const size = Math.min(UF.totalFontSize, (textWidth - gap) / Math.max(1, numberWidth(detail, 1, 'total')));
@@ -1266,6 +1262,22 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
       text(ctx, `主 ${formatMB(c.main)}`, x + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
       text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
     }
+  }
+}
+
+// 小号今日与今日在上共用本月汇总的字体、间距和颜色规则。
+function drawTodayMonthSummary(ctx, metric, x, y, width, baseline = null) {
+  const runs = !metric ? ['未返回明细'] : metric.total == null
+    ? [formatGB(metric.used), 'GB', '/', '不限量'] : [formatGB(metric.used), '/', formatGB(metric.total, true), 'GB'];
+  const gap = 2;
+  const size = Math.min(UF.totalFontSize, (width - gap * (runs.length - 1))
+    / Math.max(1, runs.reduce((sum, run) => sum + numberWidth(run, 1, 'total'), 0)));
+  const top = baseline == null ? y : baseline - size;
+  let runX = x;
+  for (const run of runs) {
+    const runWidth = numberWidth(run, size, 'total');
+    text(ctx, run, runX, top, runWidth + gap, baseline == null ? 16 : size * 1.2, size, metric ? UF.muted : UF.warning, 'total');
+    runX += runWidth + gap;
   }
 }
 
@@ -1345,16 +1357,14 @@ function drawCombinedDetail(ctx, metric, x, y, width) {
 function drawCombinedMetric(ctx, metric, label, daily, x, width, accent, region = {}) {
   const splitY = region.splitY == null ? 79 : region.splitY;
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  const heading = UF.mediumLayout === '今日在上' ? title + ' · 今日' : title;
-  text(ctx, heading, x, UF.mediumLayout === '今日横条' ? 11 : splitY - 74, width, 14, Math.min(UF.titleFontSize || 11, width / heading.length), UF.text, false, false, true);
+  text(ctx, title, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
   if (UF.mediumLayout === '今日在上') {
-    drawCombinedToday(ctx, daily, x + 10, splitY - 60, width - 10, 26, '', { left: true });
-    drawCombinedMonth(ctx, metric, x + 10, 0, width - 10, { maxSize: region.details ? 20 : 25, baseline: splitY - (region.details ? 14 : 9) });
-    drawVerticalProgress(ctx, metric, x, splitY - 56, region.details ? 47 : 52);
-    drawCombinedDetail(ctx, metric, x + 10, splitY - 8, width - 10);
+    drawCombinedToday(ctx, daily, x + 10, splitY - 50, width - 10, 30, '', { left: true });
+    drawTodayMonthSummary(ctx, metric, x + 10, 0, width - 10, splitY - 5);
+    drawVerticalProgress(ctx, metric, x, splitY - 46, 42);
   } else if (UF.mediumLayout === '今日右上角') {
-    const month = drawCombinedMonth(ctx, metric, x, 0, width, { reserve: 62, baseline: splitY - 20 });
-    const capsuleY = splitY - 55;
+    const month = drawCombinedMonth(ctx, metric, x, 0, width, { reserve: 62, baseline: splitY - (region.details ? 20 : 14) });
+    const capsuleY = splitY - 51;
     const todayHeight = Math.min(Math.max(14, Math.min(20, UF.todayFontSize * 1.2)), month.quotaY - capsuleY - 6);
     const today = combinedTodayText(daily, month.rightWidth - 8, true, todayHeight / 1.2);
     const capsuleWidth = Math.min(month.rightWidth, today.width + 8);
@@ -1649,6 +1659,14 @@ function createWidgetClass(DmYY) {
           }
         }
         this.settings.mediumTypographyInitialized = true; changed = true;
+      }
+      if (!this.settings.mediumTopSmallTypographyApplied) {
+        // 修正此前误设的系统24号默认；已自定义的今日在上字体保留。
+        if (this.settings.mediumTopTodayFont === '系统 Medium' && String(this.settings.mediumTopTodayFontSize) === '24') {
+          this.settings.mediumTopTodayFont = normalizedNumberFont(this.settings.usageFont, UF_DEFAULTS.usageFont);
+          this.settings.mediumTopTodayFontSize = String(normalizedFontSize(this.settings.usageFontSize, 'usage'));
+        }
+        this.settings.mediumTopSmallTypographyApplied = true; changed = true;
       }
       if (changed) this.saveSettings(false);
       this.name = '联通流量';
@@ -1968,8 +1986,10 @@ function createWidgetClass(DmYY) {
       }
       const values = layout ? mediumTypography(this.settings, layout) : this.settings;
       const scopeLabel = layout ? `仅“${layout}”` : '小号与独立今日';
-      const groups = [['usage', layout ? '本月用量' : '用量文字', 12, 28], ['total', layout ? '套餐总量' : '总量与百分比', 6, 14]];
-      if (layout) groups.push(['today', '今日用量', 6, 28]);
+      const groups = layout === '今日在上'
+        ? [['today', '今日用量', 6, 28], ['total', '本月用量与总量', 6, 14]]
+        : [['usage', layout ? '本月用量' : '用量文字', 12, 28], ['total', layout ? '套餐总量' : '总量与百分比', 6, 14]];
+      if (layout && layout !== '今日在上') groups.push(['today', '今日用量', 6, 28]);
       const sections = groups.map(([kind, title, min, max]) => ({ title, menu: [
         { name: typographyKey(layout, kind + 'Font'), val: typographyKey(layout, kind + 'Font'), title: '字体', type: 'select',
           options: Object.keys(UF_NUMBER_FONTS), defaultValue: values[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },

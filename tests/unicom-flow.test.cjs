@@ -858,7 +858,7 @@ function distributionFixture() {
   const layoutNames=['今日横条','今日在上','今日右上角'];
   designVisual.UF.mediumTypography=Object.fromEntries(layoutNames.map(layout=>[layout,api.mediumTypographyDefaults(designVisual.UF,layout)]));
   const removeLayoutBackground=svg=>svg.replace(/<rect[^>]*rx="(?:5|6)"[^>]*\/>/g,'')
-    .replace(/<rect[^>]*y="24"[^>]*height="[0-9.]+"[^>]*rx="[0-9.]+"[^>]*\/>/g,'');
+    .replace(/<rect[^>]*y="28"[^>]*height="[0-9.]+"[^>]*rx="[0-9.]+"[^>]*\/>/g,'');
   const chartSection=svg=>svg.slice(svg.indexOf('>今日小时</text>'));
   const layoutHistoryBefore=JSON.stringify(designHistory);
   const layoutMeasurements=[];
@@ -873,10 +873,13 @@ function distributionFixture() {
       const dailyValues=index===2?['+386','+1.3']:['386','1.3'];
       assert.ok(dailyValues.every(value=>on.includes('>'+value+'</text>')));
       assert.equal(on.includes('>今日</text>'),index===0);
-      assert.equal(on.includes(' · 今日</text>'),index===1);
+      assert.ok(!on.includes(' · 今日</text>'));
       assert.ok(!on.includes('>本月</text>')&&!on.includes('>今日用量</text>')&&!on.includes('>独享</text>'));
-      const dailyRuns=DrawContext.capture.filter(row=>[...dailyValues,'MB','GB'].includes(row.text));
-      const expectedSize=[12,26/1.2,9.6][index];
+      const headings=DrawContext.capture.filter(row=>['主卡独享','共享流量'].includes(row.text));
+      assert.equal(headings.length,2);
+      assert.deepEqual(headings.map(row=>[row.rect.x,row.rect.y]),[[19,11],[175,11]]);
+      const dailyRuns=DrawContext.capture.filter(row=>[...dailyValues,'MB','GB'].includes(row.text)&&(index!==1||row.rect.y<60));
+      const expectedSize=[12,25,9.6][index];
       assert.equal(dailyRuns.length,4);assert.ok(dailyRuns.every(row=>Math.abs(row.font.size-expectedSize)<1e-8));
       if(index>0) {
         const chartStart=DrawContext.capture.findIndex(row=>row.text==='今日小时');
@@ -886,22 +889,31 @@ function distributionFixture() {
       }
       if(index===1) {
         assert.ok(dailyRuns.every(row=>row.font.weight===500));
-        assert.ok(on.includes('font-size="25">8.8</text>'));
+        assert.ok(dailyRuns.every(row=>row.font.mono));
+        assert.ok(on.includes('font-size="11">8.8</text>'));
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
         for(let i=0;i<2;i++) assert.equal(dailyRuns[i*2].rect.x,monthRows[i].rect.x);
-        const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="23" width="5" height="52" rx="1.25" ry="1.25"/g)];
+        const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="33" width="5" height="42" rx="1.25" ry="1.25"/g)];
         assert.equal(tracks.length,2);assert.equal(Number(tracks[0][1]),19);assert.equal(Number(tracks[1][1]),175);
         assert.ok(!on.includes('y="82" width="144" height="4"'));
         assert.ok(!on.includes('rx="5"'));
         const viceSegment=[...on.matchAll(/<rect x="175" y="([0-9.]+)" width="5" height="([0-9.]+)"[^>]*fill="(#[A-Fa-f0-9]+)"/g)].find(row=>row[3]==='#'+designVisual.UF.purple);
         const shared=api.displayMetrics(designHistory.data).right;
         assert.ok(viceSegment);
-        assert.ok(Math.abs(Number(viceSegment[2])-52*shared.used/shared.total)<1e-8);
+        assert.ok(Math.abs(Number(viceSegment[2])-42*shared.used/shared.total)<1e-8);
         assert.ok(Math.abs(Number(viceSegment[1])+Number(viceSegment[2])-75)<1e-8);
+        assert.equal(on.match(/<text[^>]*fill="([^"]+)"[^>]*>8.8<\/text>/)[1],'#'+designVisual.UF.muted);
+        const mediumDay=dailyRuns[0],mediumMonth=monthRows[0];
+        DrawContext.capture=[];
+        designVisual.renderImage({history:designHistory,stale:false},false,158,158,'today');
+        const smallDay=DrawContext.capture.find(row=>row.text==='386');
+        const smallMonth=DrawContext.capture.find(row=>row.text==='8.8');
+        assert.equal(JSON.stringify(mediumDay.font),JSON.stringify(smallDay.font));
+        assert.equal(JSON.stringify(mediumMonth.font),JSON.stringify(smallMonth.font));
       }
       if(index===2) {
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
-        const capsules=[...on.matchAll(/<rect x="([0-9.]+)" y="24" width="([0-9.]+)" height="18" rx="9" ry="9"/g)];
+        const capsules=[...on.matchAll(/<rect x="([0-9.]+)" y="28" width="([0-9.]+)" height="18" rx="9" ry="9"/g)];
         assert.equal(capsules.length,2);
         const incrementColors=[...on.matchAll(/<text[^>]*fill="([^"]+)"[^>]*>([^<]+)<\/text>/g)].filter(row=>dailyValues.includes(row[2]));
         assert.equal(incrementColors.length,2);
@@ -912,7 +924,7 @@ function distributionFixture() {
           assert.ok(Math.abs(dailyRuns[i*2].rect.x-Number(capsules[i][1])-4)<1e-8);
           const last=dailyRuns[i*2+1];
           assert.ok(Math.abs(Number(capsules[i][1])+Number(capsules[i][2])-last.rect.x-last.rect.width-4)<1e-8);
-          assert.ok(Math.abs(dailyRuns[i*2].rect.y+dailyRuns[i*2].rect.height/2-33)<1e-8);
+          assert.ok(Math.abs(dailyRuns[i*2].rect.y+dailyRuns[i*2].rect.height/2-37)<1e-8);
         }
       }
       layoutMeasurements.push(...dailyRuns);
@@ -928,7 +940,7 @@ function distributionFixture() {
       designVisual.UF.sectionBackground=true;
       DrawContext.capture=[];
       const active=designVisual.renderImage({history:{...designHistory,data:activeData},stale:false},true,338,158);
-      assert.ok(active.includes('主 1.2 GB')&&active.includes('副 2.0 GB'));
+      assert.equal(active.includes('主 1.2 GB')&&active.includes('副 2.0 GB'),index!==1);
       assert.ok(!active.includes('主 0 MB'));
       if(index>0) {
         const chartStart=DrawContext.capture.findIndex(row=>row.text==='今日小时');
@@ -971,7 +983,7 @@ function distributionFixture() {
       designVisual.UF.mediumTypography[layout].todayFont=font;designVisual.UF.mediumTypography[layout].todayFontSize=size;
       DrawContext.capture=[];
       designVisual.renderImage({history:unitHistory,stale:false},true,292,141);
-      const runs=DrawContext.capture.filter(row=>['1.0','+1.0','<1','MB','GB'].includes(row.text));
+      const runs=DrawContext.capture.filter(row=>['1.0','+1.0','<1','MB','GB'].includes(row.text)&&(layout!=='今日在上'||row.rect.y<60));
       assert.equal(runs.length,4);
       for(let i=0;i<4;i+=2) {
         assert.equal(runs[i].font.size,runs[i+1].font.size);assert.equal(runs[i].rect.y,runs[i+1].rect.y);
@@ -1041,8 +1053,9 @@ function distributionFixture() {
   assert.ok(monthWidget.includes('y="98" width="0.5" height="32"')); // 有套餐逐卡明细时不压住文字
   for(const medium of [false,true]) {
     const todayImage=noonVisual.renderImage({history:reusableAtNoon,stale:false},medium,medium?338:158,158,'today');
-    assert.ok(todayImage.includes('共享流量 · 今日'));assert.ok(todayImage.includes('主卡独享 · 今日'));
-    assert.ok(todayImage.indexOf('主卡独享 · 今日')<todayImage.indexOf('共享流量 · 今日'));
+    assert.ok(todayImage.includes('共享流量'));assert.ok(todayImage.includes('主卡独享'));
+    assert.ok(!todayImage.includes(' · 今日'));
+    assert.ok(todayImage.indexOf('主卡独享')<todayImage.indexOf('共享流量'));
     assert.ok(todayImage.includes('>30</text>'));assert.ok(todayImage.includes('>50</text>'));
     assert.ok(todayImage.includes('>0.22</text>'));assert.ok(todayImage.includes('>120</text>'));
     assert.ok(todayImage.includes('>0.34</text>'));assert.ok(todayImage.includes('>80</text>'));
@@ -1530,7 +1543,8 @@ function distributionFixture() {
   assert.equal(new AppWidget('month').flowMode,'month');
   for(const family of ['small','medium']) {
     const w=family==='small'?await todayInstance.renderSmall():await todayInstance.renderMedium();
-    assert.ok(w.backgroundImage.includes(' · 今日'));
+    assert.ok(!w.backgroundImage.includes(' · 今日'));
+    assert.ok(w.backgroundImage.includes('数据流量·通用'));
   }
   const fontAction=instance._menuActions.flatMap(group=>group.menu).find(item=>item.name==='flowFonts');
   assert.ok(fontAction);
@@ -1619,11 +1633,17 @@ function distributionFixture() {
   assert.equal(presetInstance({mediumLayout:'今日侧边胶囊'}).settings.mediumLayout,'今日右上角');
   // 旧设置只复制一次；三种中号的实际字号独立保存，不再随小号或其他布局改变。
   assert.equal(oldTodayDefault.settings.mediumTopUsageFontSize,'25');
-  assert.equal(oldTodayDefault.settings.mediumTopTodayFontSize,'24');
+  assert.equal(oldTodayDefault.settings.mediumTopTodayFontSize,'25');
+  assert.equal(oldTodayDefault.settings.mediumTopTodayFont,'SF Mono Medium');
   assert.equal(oldTodayDefault.settings.mediumCornerTodayFontSize,'9.6');
   assert.equal(presetInstance({todayFontSize:'6'}).settings.mediumCornerTodayFontSize,'6');
   assert.equal(preservedToday.settings.mediumTopUsageFontSize,'23');
-  assert.equal(preservedToday.settings.mediumTopTodayFontSize,'21');
+  assert.equal(preservedToday.settings.mediumTopTodayFontSize,'23');
+  assert.equal(preservedToday.settings.mediumTopTodayFont,'Menlo Regular');
+  const correctedTop=presetInstance({...custom,mediumTypographyInitialized:true,mediumTopTodayFont:'系统 Medium',mediumTopTodayFontSize:'24'});
+  assert.equal(correctedTop.settings.mediumTopTodayFont,'Menlo Regular');assert.equal(correctedTop.settings.mediumTopTodayFontSize,'23');
+  assert.equal(presetInstance({...correctedTop.settings,usageFont:'系统 Regular',usageFontSize:'20'}).settings.mediumTopTodayFontSize,'23');
+  assert.equal(presetInstance({...custom,mediumTopTodayFont:'系统 Regular',mediumTopTodayFontSize:'20'}).settings.mediumTopTodayFontSize,'20');
   const perLayout=presetInstance({...custom,todayFont:'系统 Medium',todayFontSize:'12'});
   const scopeMenu=await perLayout.fontSettings();
   const fontAt=Date.now();
@@ -1632,29 +1652,33 @@ function distributionFixture() {
   for(const [index,layout] of layoutNames.entries()) {
     const previous=JSON.stringify(perLayout.settings);
     const view=await scopeMenu.options[0].menu[index+1].onClick();
-    const key=appApi.typographyKey(layout,'usageFontSize');
+    const key=appApi.typographyKey(layout,layout==='今日在上'?'totalFontSize':'usageFontSize');
     const otherKeys=Object.keys(perLayout.settings).filter(name=>name!==key);
     const othersBefore=JSON.stringify(Object.fromEntries(otherKeys.map(name=>[name,perLayout.settings[name]])));
-    assert.equal(view.options.length,4);
-    assert.equal(view.options[0].menu[1].val,key);
-    fontSizeInput=String(20+index);await view.options[0].menu[1].onClick();
-    assert.equal(perLayout.settings[key],String(20+index));
+    assert.equal(view.options.length,layout==='今日在上'?3:4);
+    const sizeGroup=view.options.find(group=>group.menu[1]&&group.menu[1].val===key);
+    const targetSize=layout==='今日在上'?10:20+index;
+    fontSizeInput=String(targetSize);await sizeGroup.menu[1].onClick();
+    assert.equal(perLayout.settings[key],String(targetSize));
     assert.equal(JSON.stringify(Object.fromEntries(otherKeys.map(name=>[name,perLayout.settings[name]]))),othersBefore);
     assert.notEqual(JSON.stringify(perLayout.settings),previous);
-    perLayout.settings[view.options[0].menu[0].val]=['Menlo Regular','系统 Regular','SF Mono Medium'][index];
-    perLayout.settings[view.options[1].menu[0].val]='系统 Medium';
-    perLayout.settings[view.options[2].menu[0].val]=['SF Mono Regular','Menlo Regular','系统 Regular'][index];
-    const daySize=[10,23,11][index];fontSizeInput=String(daySize);await view.options[2].menu[1].onClick();
+    const usageGroup=view.options.find(group=>group.menu[0].val===appApi.typographyKey(layout,'usageFont'));
+    const totalGroup=view.options.find(group=>group.menu[0].val===appApi.typographyKey(layout,'totalFont'));
+    const todayGroup=view.options.find(group=>group.menu[0].val===appApi.typographyKey(layout,'todayFont'));
+    if(usageGroup) perLayout.settings[usageGroup.menu[0].val]=['Menlo Regular','系统 Regular','SF Mono Medium'][index];
+    perLayout.settings[totalGroup.menu[0].val]='系统 Medium';
+    perLayout.settings[todayGroup.menu[0].val]=['SF Mono Regular','Menlo Regular','系统 Regular'][index];
+    const daySize=[10,23,11][index];fontSizeInput=String(daySize);await todayGroup.menu[1].onClick();
     const title=appApi.typographyKey(layout,'titleFontSize');
-    fontSizeInput=String(9+index);await view.options[3].menu[0].onClick();
+    fontSizeInput=String(9+index);await view.options.at(-1).menu[0].onClick();
     assert.equal(perLayout.settings[title],String(9+index));
     perLayout.settings.mediumLayout=layout;perLayout.applySettings();
     DrawContext.capture=[];
     appApi.renderImage({history:fontHistory,stale:false},true,338,158);
     const monthRun=DrawContext.capture.find(row=>row.text==='8.8');
     const dayRun=DrawContext.capture.find(row=>row.text===(index===2?'+386':'386'));
-    assert.equal(monthRun.font.size,20+index);
-    assert.ok(Math.abs(dayRun.font.size-(layout==='今日在上'?Math.min(daySize,26/1.2):daySize))<1e-8);
+    assert.equal(monthRun.font.size,targetSize);
+    assert.ok(Math.abs(dayRun.font.size-daySize)<1e-8);
     const fontName=font=>font.name||(font.mono?'SF Mono':'系统');
     assert.equal(fontName(monthRun.font),['Menlo-Regular','系统','SF Mono'][index]);
     assert.equal(fontName(dayRun.font),['SF Mono','Menlo-Regular','系统'][index]);
@@ -1662,10 +1686,10 @@ function distributionFixture() {
     assert.equal(appApi.UF.usageFontSize,23); // 中号绘制后，小号字体状态已恢复。
   }
   const persisted=presetInstance({...perLayout.settings,usageFontSize:'27',todayFontSize:'8'});
-  assert.equal(persisted.settings.mediumBarUsageFontSize,'20');assert.equal(persisted.settings.mediumTopUsageFontSize,'21');assert.equal(persisted.settings.mediumCornerUsageFontSize,'22');
+  assert.equal(persisted.settings.mediumBarUsageFontSize,'20');assert.equal(persisted.settings.mediumTopUsageFontSize,'23');assert.equal(persisted.settings.mediumCornerUsageFontSize,'22');
   assert.equal(persisted.settings.mediumTopTodayFontSize,'23');
   const topFonts=await persisted.fontSettings('今日在上');
-  fontSizeInput='';await topFonts.options[3].menu[0].onClick();
+  fontSizeInput='';await topFonts.options.at(-1).menu[0].onClick();
   assert.equal(presetInstance({...persisted.settings,titleFontSize:'12'}).settings.mediumTopTitleFontSize,undefined);
   persisted.applySettings();
   const fontStateBefore=JSON.stringify(['usageFont','totalFont','todayFont','usageFontSize','totalFontSize','todayFontSize','titleFontSize'].map(key=>appApi.UF[key]));

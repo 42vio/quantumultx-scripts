@@ -890,7 +890,7 @@ function distributionFixture() {
       if(index===1) {
         assert.ok(dailyRuns.every(row=>row.font.weight===500));
         assert.ok(dailyRuns.every(row=>row.font.mono));
-        assert.ok(on.includes('font-size="11">8.8</text>'));
+        assert.ok(on.includes('font-size="13">8.8</text>'));
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
         for(let i=0;i<2;i++) assert.equal(dailyRuns[i*2].rect.x,monthRows[i].rect.x);
         const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="33" width="5" height="42" rx="1.25" ry="1.25"/g)];
@@ -902,14 +902,18 @@ function distributionFixture() {
         assert.ok(viceSegment);
         assert.ok(Math.abs(Number(viceSegment[2])-42*shared.used/shared.total)<1e-8);
         assert.ok(Math.abs(Number(viceSegment[1])+Number(viceSegment[2])-75)<1e-8);
-        assert.equal(on.match(/<text[^>]*fill="([^"]+)"[^>]*>8.8<\/text>/)[1],'#'+designVisual.UF.muted);
+        assert.equal(on.match(/<text[^>]*fill="([^"]+)"[^>]*>8.8<\/text>/)[1],'#'+designVisual.UF.text);
+        assert.equal(on.match(/<text[^>]*fill="([^"]+)"[^>]*>80<\/text>/)[1],'#'+designVisual.UF.muted);
+        assert.ok([...on.matchAll(/<text[^>]*fill="([^"]+)"[^>]*>\/<\/text>/g)].every(row=>row[1]==='#'+designVisual.UF.muted));
         const mediumDay=dailyRuns[0],mediumMonth=monthRows[0];
         DrawContext.capture=[];
-        designVisual.renderImage({history:designHistory,stale:false},false,158,158,'today');
+        const smallImage=designVisual.renderImage({history:designHistory,stale:false},false,158,158,'today');
+        assert.equal(smallImage.match(/<text[^>]*fill="([^"]+)"[^>]*>8.8<\/text>/)[1],'#'+designVisual.UF.muted);
         const smallDay=DrawContext.capture.find(row=>row.text==='386');
         const smallMonth=DrawContext.capture.find(row=>row.text==='8.8');
         assert.equal(JSON.stringify(mediumDay.font),JSON.stringify(smallDay.font));
-        assert.equal(JSON.stringify(mediumMonth.font),JSON.stringify(smallMonth.font));
+        assert.equal(mediumMonth.font.size,smallMonth.font.size+2);
+        assert.equal(JSON.stringify({...mediumMonth.font,size:smallMonth.font.size}),JSON.stringify(smallMonth.font));
       }
       if(index===2) {
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
@@ -1632,12 +1636,12 @@ function distributionFixture() {
   assert.equal(presetInstance({mediumLayout:'今日集中方块'}).settings.mediumLayout,'今日在上');
   assert.equal(presetInstance({mediumLayout:'今日侧边胶囊'}).settings.mediumLayout,'今日右上角');
   // 旧设置只复制一次；三种中号的实际字号独立保存，不再随小号或其他布局改变。
-  assert.equal(oldTodayDefault.settings.mediumTopUsageFontSize,'25');
+  assert.equal(oldTodayDefault.settings.mediumTopMonthFontSize,'13');
   assert.equal(oldTodayDefault.settings.mediumTopTodayFontSize,'25');
   assert.equal(oldTodayDefault.settings.mediumTopTodayFont,'SF Mono Medium');
   assert.equal(oldTodayDefault.settings.mediumCornerTodayFontSize,'9.6');
   assert.equal(presetInstance({todayFontSize:'6'}).settings.mediumCornerTodayFontSize,'6');
-  assert.equal(preservedToday.settings.mediumTopUsageFontSize,'23');
+  assert.equal(preservedToday.settings.mediumTopMonthFontSize,'14');
   assert.equal(preservedToday.settings.mediumTopTodayFontSize,'23');
   assert.equal(preservedToday.settings.mediumTopTodayFont,'Menlo Regular');
   const correctedTop=presetInstance({...custom,mediumTypographyInitialized:true,mediumTopTodayFont:'系统 Medium',mediumTopTodayFontSize:'24'});
@@ -1652,12 +1656,12 @@ function distributionFixture() {
   for(const [index,layout] of layoutNames.entries()) {
     const previous=JSON.stringify(perLayout.settings);
     const view=await scopeMenu.options[0].menu[index+1].onClick();
-    const key=appApi.typographyKey(layout,layout==='今日在上'?'totalFontSize':'usageFontSize');
+    const key=appApi.typographyKey(layout,'usageFontSize');
     const otherKeys=Object.keys(perLayout.settings).filter(name=>name!==key);
     const othersBefore=JSON.stringify(Object.fromEntries(otherKeys.map(name=>[name,perLayout.settings[name]])));
-    assert.equal(view.options.length,layout==='今日在上'?3:4);
+    assert.equal(view.options.length,4);
     const sizeGroup=view.options.find(group=>group.menu[1]&&group.menu[1].val===key);
-    const targetSize=layout==='今日在上'?10:20+index;
+    const targetSize=20+index;
     fontSizeInput=String(targetSize);await sizeGroup.menu[1].onClick();
     assert.equal(perLayout.settings[key],String(targetSize));
     assert.equal(JSON.stringify(Object.fromEntries(otherKeys.map(name=>[name,perLayout.settings[name]]))),othersBefore);
@@ -1686,9 +1690,16 @@ function distributionFixture() {
     assert.equal(appApi.UF.usageFontSize,23); // 中号绘制后，小号字体状态已恢复。
   }
   const persisted=presetInstance({...perLayout.settings,usageFontSize:'27',todayFontSize:'8'});
-  assert.equal(persisted.settings.mediumBarUsageFontSize,'20');assert.equal(persisted.settings.mediumTopUsageFontSize,'23');assert.equal(persisted.settings.mediumCornerUsageFontSize,'22');
+  assert.equal(persisted.settings.mediumBarUsageFontSize,'20');assert.equal(persisted.settings.mediumTopMonthFontSize,'21');assert.equal(persisted.settings.mediumCornerUsageFontSize,'22');
   assert.equal(persisted.settings.mediumTopTodayFontSize,'23');
   const topFonts=await persisted.fontSettings('今日在上');
+  assert.equal(topFonts.options[1].menu[1].val,'mediumTopMonthFontSize');
+  const daySizeBefore=persisted.settings.mediumTopTodayFontSize,quotaSizeBefore=persisted.settings.mediumTopTotalFontSize;
+  fontSizeInput='6';await topFonts.options[1].menu[1].onClick();
+  persisted.applySettings();assert.equal(appApi.UF.mediumTypography['今日在上'].usageFontSize,6);
+  assert.equal(persisted.settings.mediumTopTodayFontSize,daySizeBefore);assert.equal(persisted.settings.mediumTopTotalFontSize,quotaSizeBefore);
+  fontSizeInput='13';await topFonts.options[1].menu[1].onClick();
+  assert.equal(presetInstance({...persisted.settings,mediumTopTotalFontSize:'14'}).settings.mediumTopMonthFontSize,'13');
   fontSizeInput='';await topFonts.options.at(-1).menu[0].onClick();
   assert.equal(presetInstance({...persisted.settings,titleFontSize:'12'}).settings.mediumTopTitleFontSize,undefined);
   persisted.applySettings();

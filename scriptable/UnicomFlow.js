@@ -45,9 +45,11 @@ const UF = {
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
 const UF_DEFAULTS = { ...UF };
-const UF_MEDIUM_LAYOUTS = ['今日横条', '今日集中方块', '今日侧边胶囊'];
+const UF_MEDIUM_LAYOUTS = ['今日横条', '今日在上', '今日右上角'];
 
 function normalizedMediumLayout(value) {
+  if (value === '今日集中方块') return '今日在上';
+  if (value === '今日侧边胶囊') return '今日右上角';
   return UF_MEDIUM_LAYOUTS.includes(value) ? value : UF_DEFAULTS.mediumLayout;
 }
 
@@ -163,6 +165,7 @@ function megabytes(value, unit) {
 function formatMB(value, mode = 'usage') {
   if (value == null || !Number.isFinite(value)) return '—';
   if (value === 0) return '0MB';
+  if (mode === 'daily' && value > 0 && value < 1) return '<1MB';
   const scale = value >= 1024 ? [1024, 'GB'] : [1, 'MB'];
   const displayed = value / scale[0];
   const digits = value < 1024 && value >= 10 ? 0 : 1;
@@ -1143,6 +1146,24 @@ function roundedRect(ctx, x, y, w, h, radius, color) {
   ctx.fillPath();
 }
 
+// 在整根色条绘制后修整外角，分段交界保持直角，微小色段也不会被拉长。
+function softenBarCorners(ctx, x, y, width, height, radius, background, topOnly = false) {
+  const r = Math.min(radius, width / 2, height / 2);
+  if (!(r > 0)) return;
+  const corners = [[x, y, 1, 1], [x + width, y, -1, 1]];
+  if (!topOnly) corners.push([x, y + height, 1, -1], [x + width, y + height, -1, -1]);
+  ctx.setFillColor(new Color(background));
+  for (const [cx, cy, dx, dy] of corners) {
+    const point = (px, py) => new Point(cx + px * dx, cy + py * dy);
+    const path = new Path(), control = r * (1 - 0.55228475);
+    path.move(point(0, 0));
+    path.addLine(point(r, 0));
+    path.addCurve(point(0, r), point(control, 0), point(0, control));
+    path.closeSubpath();
+    ctx.addPath(path); ctx.fillPath();
+  }
+}
+
 function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dailyUsed = null) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
   const heading = today ? title + ' · 今日' : title;
@@ -1221,44 +1242,46 @@ function combinedTint(accent, strength = 0.09) {
   }).join('');
 }
 
-function combinedTodayText(value, width) {
+function combinedTodayText(value, width, scale = 1, increment = false, maxSize = Infinity) {
   const formatted = formatMB(value, 'daily'), match = formatted.match(/^(.*?)(MB|GB)$/);
   const runs = match ? [match[1], match[2]] : [formatted];
+  if (increment && value > 0 && Number.isFinite(value) && !formatted.startsWith('<')) runs[0] = '+' + runs[0];
   // 数字、单位独立绘制并预留真实字宽，避免真机换行后裁掉单位。
   const units = runs.map((run, index) => numberWidth(run, 1, 'today') * (index ? 1.2 : 1.05));
-  const size = Math.min(UF.todayFontSize, (width - 2 * runs.length - 2 * (runs.length - 1)) / Math.max(1, units.reduce((a, b) => a + b, 0)));
+  const size = Math.min(UF.todayFontSize * scale, maxSize, (width - 2 * runs.length - 2 * (runs.length - 1)) / Math.max(1, units.reduce((a, b) => a + b, 0)));
   const widths = units.map(unit => unit * size + 2);
   return { runs, size, widths, width: widths.reduce((a, b) => a + b, 0) + 2 * (runs.length - 1) };
 }
 
-function drawCombinedToday(ctx, value, x, y, width, height, label = '') {
+function drawCombinedToday(ctx, value, x, y, width, height, label = '', options = {}) {
   const labelWidth = label ? 14 : 0, gap = label ? 3 : 0;
-  const spec = combinedTodayText(value, width - labelWidth - gap);
-  let start = x + (width - spec.width - labelWidth - gap) / 2;
+  const spec = combinedTodayText(value, width - labelWidth - gap, options.scale || 1, options.increment, height / 1.2);
+  let start = options.left ? x : x + (width - spec.width - labelWidth - gap) / 2;
   if (label) {
     text(ctx, label, start, y + (height - 8.4) / 2, labelWidth, 8.4, 7, UF.muted);
     start += labelWidth + gap;
   }
   spec.runs.forEach((run, index) => {
-    text(ctx, run, start, y + (height - spec.size * 1.2) / 2, spec.widths[index], spec.size * 1.2, spec.size, UF.text, 'today');
+    text(ctx, run, start, y + (height - spec.size * 1.2) / 2, spec.widths[index], spec.size * 1.2, spec.size, options.color || UF.text, 'today');
     start += spec.widths[index] + 2;
   });
 }
 
-function drawCombinedMonth(ctx, metric, x, y, width, stacked = false) {
+function drawCombinedMonth(ctx, metric, x, y, width, options = {}) {
   const used = metric ? metric.used / 1024 : null;
   const primary = used == null ? '—' : used > 0 && used < 0.1 ? '<0.1' : used.toFixed(1);
   const quota = metric ? metric.total == null ? ' GB / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
-  const quotaSize = Math.min(UF.totalFontSize, width / Math.max(1, numberWidth(quota, 1, 'total')));
-  const primarySize = Math.min(UF.usageFontSize, (width - (stacked ? 0 : numberWidth(quota, quotaSize, 'total') + 2))
+  const quotaSize = Math.min(UF.totalFontSize * (options.totalScale || 1), width / Math.max(1, numberWidth(quota, 1, 'total')));
+  const primarySize = Math.min(UF.usageFontSize * (options.scale || 1), (width - Math.max(options.reserve || 0, numberWidth(quota, quotaSize, 'total') + 2))
     / Math.max(1, numberWidth(primary, 1, 'usage')));
   const valueWidth = numberWidth(primary, primarySize, 'usage');
   text(ctx, primary, x, y, valueWidth + 2, 34, primarySize, UF.text, 'number');
-  if (quota) text(ctx, quota, stacked ? x : x + valueWidth + 2, stacked ? y + 28 : y + primarySize - quotaSize,
-    stacked ? width : width - valueWidth - 2, 18, quotaSize, UF.muted, 'total');
+  if (quota) text(ctx, quota, x + valueWidth + 2, y + primarySize - quotaSize,
+    width - valueWidth - 2, 18, quotaSize, UF.muted, 'total');
+  return { rightX: x + valueWidth + 2, rightWidth: width - valueWidth - 2 };
 }
 
-function drawCombinedProgress(ctx, metric, x, y, width, height = 3) {
+function drawCombinedProgress(ctx, metric, x, y, width, height = 4) {
   roundedRect(ctx, x, y, width, height, height / 2, UF.track);
   if (!metric || !(metric.total > 0 && metric.used > 0)) return;
   const c = metric.composition, scale = width / Math.max(metric.total, metric.used);
@@ -1266,6 +1289,7 @@ function drawCombinedProgress(ctx, metric, x, y, width, height = 3) {
     for (const [offset, value, color] of [[0, c.main, UF.blue], [c.main, c.vice, UF.purple]]) {
       if (value > 0) { ctx.setFillColor(new Color(color)); ctx.fillRect(new Rect(x + offset * scale, y, value * scale, height)); }
     }
+    softenBarCorners(ctx, x, y, metric.used * scale, height, height / 2, UF.track);
   } else if (!c) roundedRect(ctx, x, y, metric.used * scale, height, height / 2, UF.blue);
 }
 
@@ -1282,37 +1306,26 @@ function drawCombinedDetail(ctx, metric, x, y, width) {
 }
 
 function drawCombinedMetric(ctx, metric, label, daily, x, width, accent) {
-  const side = UF.mediumLayout === '今日侧边胶囊';
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
   text(ctx, title, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
-  drawCombinedMonth(ctx, metric, x, side ? 29 : 28, side ? width - 62 : width, side);
-  drawCombinedProgress(ctx, metric, x, side ? 75 : 59, width);
-  drawCombinedDetail(ctx, metric, x, side ? 80 : 62, width);
-  if (side) {
-    const boxX = x + width - 55;
-    if (UF.sectionBackground) roundedRect(ctx, boxX, 31, 55, 41, 7, combinedTint(accent));
-    text(ctx, '今日', boxX, 36, 55, 9, 7, UF.muted, false, true);
-    drawCombinedToday(ctx, daily, boxX + 3, 48, 49, 21);
+  if (UF.mediumLayout === '今日在上') {
+    if (UF.sectionBackground) roundedRect(ctx, x, 32.5, 29, 15, 5, combinedTint(accent));
+    text(ctx, '今日', x, 35.5, 29, 9, 7.5, UF.muted, false, true);
+    drawCombinedToday(ctx, daily, x + 34, 27, width - 34, 26, '', { scale: 1.6, left: true });
+    drawCombinedMonth(ctx, metric, x, 56, width, { scale: 0.6, totalScale: 0.8 });
+    drawCombinedProgress(ctx, metric, x, 76, width);
+    drawCombinedDetail(ctx, metric, x, 80, width);
+  } else if (UF.mediumLayout === '今日右上角') {
+    const month = drawCombinedMonth(ctx, metric, x, 38, width, { reserve: 62 });
+    drawCombinedToday(ctx, daily, month.rightX, 26, month.rightWidth, 14, '', { scale: 0.8, left: true, increment: true, color: accent });
+    drawCombinedProgress(ctx, metric, x, 76, width);
+    drawCombinedDetail(ctx, metric, x, 80, width);
   } else {
+    drawCombinedMonth(ctx, metric, x, 28, width);
+    drawCombinedProgress(ctx, metric, x, 59, width);
+    drawCombinedDetail(ctx, metric, x, 63, width);
     if (UF.sectionBackground) roundedRect(ctx, x, 70, width, 17, 6, combinedTint(accent));
     drawCombinedToday(ctx, daily, x + 3, 70, width - 6, 17, '今日');
-  }
-}
-
-function drawCombinedRows(ctx, metrics, daily, x, width) {
-  const square = 72, gap = 12, rowWidth = width - square - gap, boxX = x + rowWidth + gap;
-  for (const [index, metric, label, accent] of [[0, metrics.left, metrics.leftLabel, UF.blue], [1, metrics.right, metrics.rightLabel, UF.purple]]) {
-    const y = 8 + index * 37;
-    if (UF.sectionBackground) roundedRect(ctx, x - 4, y, rowWidth + 8, 34, 8, combinedTint(accent, 0.045));
-    text(ctx, label, x + 2, y + 9, 50, 14, Math.min(UF.titleFontSize || 10, 50 / Math.max(1, label.length)), UF.text, false, false, true);
-    drawCombinedMonth(ctx, metric, x + 54, y, rowWidth - 54);
-    drawCombinedProgress(ctx, metric, x + 54, y + 29.5, rowWidth - 58, 2.5);
-  }
-  drawCombinedDetail(ctx, metrics.right, x, 80, rowWidth);
-  if (UF.sectionBackground) roundedRect(ctx, boxX, 8, square, square, 10, combinedTint(UF.purple, 0.045));
-  text(ctx, '今日用量', boxX, 14, square, 11, 8, UF.muted, false, true);
-  for (const [index, label] of [[0, metrics.leftLabel === '主卡独享' ? '独享' : metrics.leftLabel], [1, metrics.rightLabel === '共享流量' ? '共享' : metrics.rightLabel]]) {
-    drawCombinedToday(ctx, daily[index], boxX + 3.5, 30 + index * 24, square - 7, 18, label);
   }
 }
 
@@ -1346,6 +1359,7 @@ function drawCompactChart(ctx, slots, title, x, y, width, hourly = false) {
           bottom -= segment; ctx.setFillColor(new Color(color));
           ctx.fillRect(new Rect(center - barWidth / 2, bottom, barWidth, segment));
         }
+        softenBarCorners(ctx, center - barWidth / 2, bottomY - h, barWidth, h, 0.75, UF.bg, true);
       } else { ctx.setFillColor(new Color(UF.track)); ctx.fillRect(new Rect(center - barWidth / 2, bottomY - 1, barWidth, 1)); }
     }
     offset += cell;
@@ -1375,12 +1389,8 @@ function renderImage(result, medium, width, height, mode = 'month') {
   const buckets = medium && today ? todayBuckets(result.history, now) : [];
   if (combined) {
     const leftX = pad + 6, col = (width - 2 * leftX - 12) / 2, rightX = leftX + col + 12;
-    if (UF.mediumLayout === '今日集中方块') {
-      drawCombinedRows(ctx, metrics, daily, leftX, width - 2 * leftX);
-    } else {
-      drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue);
-      drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple);
-    }
+    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue);
+    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple);
     // 下半双图的坐标与底色开关无关。
     const chartY = 98;
     drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', leftX, chartY, col, true);

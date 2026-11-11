@@ -1193,6 +1193,25 @@ function softenBarCorners(ctx, x, y, width, height, radius, background, topOnly 
   }
 }
 
+function drawVerticalProgress(ctx, metric, x, y, height, width = 5) {
+  const bar = (top, barHeight, color) => roundedRect(ctx, x, top, width, barHeight, Math.min(width, barHeight) / 4, color);
+  bar(y, height, UF.track);
+  if (!metric) return;
+  if (metric.composition) {
+    const c = metric.composition;
+    // 与小号共用：按月套餐总量从底部堆叠，明细不全时仅保留灰色底轨。
+    if (c.complete && metric.used > 0 && metric.total > 0) {
+      const scale = height / Math.max(metric.total, c.main + c.vice);
+      const mainHeight = c.main * scale, viceHeight = c.vice * scale;
+      if (c.main > 0) bar(y + height - mainHeight, mainHeight, UF.blue);
+      if (c.vice > 0) bar(y + height - mainHeight - viceHeight, viceHeight, UF.purple);
+    }
+  } else if (metric.total > 0) {
+    const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
+    bar(y + height * (1 - ratio), height * ratio, UF.blue);
+  }
+}
+
 function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dailyUsed = null) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
   const heading = today ? title + ' · 今日' : title;
@@ -1237,19 +1256,9 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
     const detailSize = Math.min(UF.totalFontSize, textWidth / Math.max(1, numberWidth(detail, 1, 'total')));
     text(ctx, detail, textX, y + 44, textWidth, 16, detailSize, metric ? UF.muted : UF.warning, 'total');
   }
-  const barY = y + 18, barH = 37, barW = 5;
-  // 小圆角矩形：横纵圆角相同，短彩条也保留平直边缘。
-  const bar = (top, height, color) => roundedRect(ctx, x, top, barW, height, Math.min(barW, height) / 4, color);
-  bar(barY, barH, UF.track);
+  drawVerticalProgress(ctx, metric, x, y + 18, 37);
   if (metric && metric.composition) {
     const c = metric.composition;
-    // 彩条按套餐总量分别表示主副卡已用量，未用部分保留灰色。自底部向上增长，超额时按已用构成缩放至条高。
-    if (c.complete && metric.used > 0 && metric.total > 0) {
-      const scale = barH / Math.max(metric.total, c.main + c.vice);
-      const mainHeight = c.main * scale, viceHeight = c.vice * scale;
-      if (c.main > 0) bar(barY + barH - mainHeight, mainHeight, UF.blue);
-      if (c.vice > 0) bar(barY + barH - mainHeight - viceHeight, viceHeight, UF.purple);
-    }
     if (!today && !(c.complete && c.main === 0)) {
       const half = width / 2;
       roundedRect(ctx, x, y + 63, 2.5, 2.5, 1.25, UF.blue);
@@ -1257,9 +1266,6 @@ function drawMetric(ctx, metric, label, x, y, width, compact, today = false, dai
       text(ctx, `主 ${formatMB(c.main)}`, x + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
       text(ctx, `副 ${formatMB(c.vice)}`, x + half + 5, y + 60, half - 5, 10, compact ? 6 : 6.5, UF.muted);
     }
-  } else if (metric && metric.total > 0) {
-    const ratio = Math.min(1, Math.max(0, metric.used / metric.total));
-    bar(barY + barH * (1 - ratio), barH * ratio, UF.blue);
   }
 }
 
@@ -1336,14 +1342,13 @@ function drawCombinedDetail(ctx, metric, x, y, width) {
 
 function drawCombinedMetric(ctx, metric, label, daily, x, width, accent) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, title, x, UF.mediumLayout === '今日在上' ? 7 : 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
+  const heading = UF.mediumLayout === '今日在上' ? title + ' · 今日' : title;
+  text(ctx, heading, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / heading.length), UF.text, false, false, true);
   if (UF.mediumLayout === '今日在上') {
-    if (UF.sectionBackground) roundedRect(ctx, x, 28, 29, 15, 5, combinedTint(accent));
-    text(ctx, '今日', x, 31, 29, 9, 7.5, UF.muted, false, true);
-    drawCombinedToday(ctx, daily, x + 34, 21, width - 34, 29, '', { left: true });
-    drawCombinedMonth(ctx, metric, x, 51, width, { maxSize: 25 });
-    drawCombinedProgress(ctx, metric, x, 82, width);
-    drawCombinedDetail(ctx, metric, x, 86, width);
+    drawCombinedToday(ctx, daily, x + 10, 25, width - 10, 29, '', { left: true });
+    drawCombinedMonth(ctx, metric, x + 10, 56, width - 10, { maxSize: 25 });
+    drawVerticalProgress(ctx, metric, x, 29, 52);
+    drawCombinedDetail(ctx, metric, x + 10, 86, width - 10);
   } else if (UF.mediumLayout === '今日右上角') {
     const month = drawCombinedMonth(ctx, metric, x, 38, width, { reserve: 62 });
     const todayHeight = Math.max(14, Math.min(20, UF.todayFontSize * 1.2));

@@ -872,17 +872,26 @@ function distributionFixture() {
       assert.ok(on.includes('>8.8</text>')&&on.includes('>3.2</text>'));
       const dailyValues=index===2?['+386','+1.3']:['386','1.3'];
       assert.ok(dailyValues.every(value=>on.includes('>'+value+'</text>')));
-      assert.equal(on.includes('>今日</text>'),index!==2);
+      assert.equal(on.includes('>今日</text>'),index===0);
+      assert.equal(on.includes(' · 今日</text>'),index===1);
       assert.ok(!on.includes('>本月</text>')&&!on.includes('>今日用量</text>')&&!on.includes('>独享</text>'));
       const dailyRuns=DrawContext.capture.filter(row=>[...dailyValues,'MB','GB'].includes(row.text));
       const scale=[1,2,.8][index];
       assert.equal(dailyRuns.length,4);assert.ok(dailyRuns.every(row=>Math.abs(row.font.size-12*scale)<1e-8));
       if(index===1) {
-        const badges=DrawContext.capture.filter(row=>row.text==='今日');
-        assert.equal(badges.length,2);
-        for(let i=0;i<2;i++) assert.ok(Math.abs(badges[i].rect.y+badges[i].rect.height/2-dailyRuns[i*2].rect.y-dailyRuns[i*2].rect.height/2)<1e-8);
         assert.ok(dailyRuns.every(row=>row.font.weight===500));
         assert.ok(on.includes('font-size="25">8.8</text>'));
+        const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
+        for(let i=0;i<2;i++) assert.equal(dailyRuns[i*2].rect.x,monthRows[i].rect.x);
+        const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="29" width="5" height="52" rx="1.25" ry="1.25"/g)];
+        assert.equal(tracks.length,2);assert.equal(Number(tracks[0][1]),19);assert.equal(Number(tracks[1][1]),175);
+        assert.ok(!on.includes('y="82" width="144" height="4"'));
+        assert.ok(!on.includes('rx="5"'));
+        const viceSegment=[...on.matchAll(/<rect x="175" y="([0-9.]+)" width="5" height="([0-9.]+)"[^>]*fill="(#[A-Fa-f0-9]+)"/g)].find(row=>row[3]==='#'+designVisual.UF.purple);
+        const shared=api.displayMetrics(designHistory.data).right;
+        assert.ok(viceSegment);
+        assert.ok(Math.abs(Number(viceSegment[2])-52*shared.used/shared.total)<1e-8);
+        assert.ok(Math.abs(Number(viceSegment[1])+Number(viceSegment[2])-81)<1e-8);
       }
       if(index===2) {
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));

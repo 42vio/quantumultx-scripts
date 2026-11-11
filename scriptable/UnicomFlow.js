@@ -40,12 +40,14 @@ const UF = {
   folder: 'UnicomFlow',
   usageFont: 'SF Mono Medium', totalFont: '系统 Medium', todayFont: '系统 Medium',
   usageFontSize: 25, totalFontSize: 11, todayFontSize: 12, titleFontSize: null,
-  sectionBackground: true, mediumLayout: '今日横条',
+  sectionBackground: true, mediumLayout: '今日横条', mediumTypography: null,
   bg: '1C1C1E', text: 'F5F5F7', muted: 'A4A4AA', track: '454548', panelBg: '28282C', todayBg: '37373D',
   blue: '0A94FF', purple: '8A73FF', warning: 'FFD166', gridMajor: '38383C', gridMinor: '27272B',
 };
 const UF_DEFAULTS = { ...UF };
 const UF_MEDIUM_LAYOUTS = ['今日横条', '今日在上', '今日右上角'];
+const UF_MEDIUM_FONT_PREFIXES = { '今日横条': 'mediumBar', '今日在上': 'mediumTop', '今日右上角': 'mediumCorner' };
+const UF_TYPOGRAPHY_KEYS = ['usageFont', 'totalFont', 'todayFont', 'usageFontSize', 'totalFontSize', 'todayFontSize', 'titleFontSize'];
 
 function normalizedMediumLayout(value) {
   if (value === '今日集中方块') return '今日在上';
@@ -67,16 +69,43 @@ function normalizedNumberFont(value, fallback = 'SF Mono Regular') {
   return value === 'Menlo' ? 'Menlo Regular' : fallback;
 }
 
-function normalizedFontSize(value, kind) {
+function normalizedFontSize(value, kind, medium = false, fallback = UF_DEFAULTS[kind + 'FontSize']) {
   const n = Number(value);
-  const [min, max] = kind === 'usage' ? [12, 28] : [6, 14];
+  const [min, max] = kind === 'usage' ? [12, 28] : kind === 'today' && medium ? [6, 28] : [6, 14];
   return String(value == null ? '' : value).trim() && Number.isFinite(n) && n >= min && n <= max
-    ? n : UF_DEFAULTS[kind + 'FontSize'];
+    ? n : fallback;
 }
 
 function normalizedTitleSize(value) {
   const n = Number(value);
   return String(value == null ? '' : value).trim() && Number.isFinite(n) && n >= 8 && n <= 12 ? n : null;
+}
+
+function typographyKey(layout, key) {
+  return layout ? UF_MEDIUM_FONT_PREFIXES[layout] + key[0].toUpperCase() + key.slice(1) : key;
+}
+
+function mediumTypographyDefaults(settings, layout) {
+  const values = {};
+  for (const kind of ['usage', 'total', 'today']) {
+    values[kind + 'Font'] = normalizedNumberFont(settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
+    values[kind + 'FontSize'] = normalizedFontSize(settings[kind + 'FontSize'], kind);
+  }
+  // 迁移一次旧版今日视觉大小；保存的是实际字号，绘制时不再使用布局倍数。
+  values.todayFontSize = Math.max(6, Math.min(28,
+    Math.round(values.todayFontSize * (layout === '今日在上' ? 2 : layout === '今日右上角' ? 0.8 : 1) * 100) / 100));
+  values.titleFontSize = normalizedTitleSize(settings.titleFontSize);
+  return values;
+}
+
+function mediumTypography(settings, layout) {
+  const defaults = mediumTypographyDefaults(UF_DEFAULTS, layout), values = {};
+  for (const kind of ['usage', 'total', 'today']) {
+    values[kind + 'Font'] = normalizedNumberFont(settings[typographyKey(layout, kind + 'Font')], defaults[kind + 'Font']);
+    values[kind + 'FontSize'] = normalizedFontSize(settings[typographyKey(layout, kind + 'FontSize')], kind, true, defaults[kind + 'FontSize']);
+  }
+  values.titleFontSize = normalizedTitleSize(settings[typographyKey(layout, 'titleFontSize')]);
+  return values;
 }
 
 const UF_THEMES = {
@@ -1242,20 +1271,20 @@ function combinedTint(accent, strength = 0.09) {
   }).join('');
 }
 
-function combinedTodayText(value, width, scale = 1, increment = false, maxSize = Infinity) {
+function combinedTodayText(value, width, increment = false, maxSize = Infinity) {
   const formatted = formatMB(value, 'daily'), match = formatted.match(/^(.*?)(MB|GB)$/);
   const runs = match ? [match[1], match[2]] : [formatted];
   if (increment && value > 0 && Number.isFinite(value) && !formatted.startsWith('<')) runs[0] = '+' + runs[0];
   // 数字、单位独立绘制并预留真实字宽，避免真机换行后裁掉单位。
   const units = runs.map((run, index) => numberWidth(run, 1, 'today') * (index ? 1.2 : 1.05));
-  const size = Math.min(UF.todayFontSize * scale, maxSize, (width - 2 * runs.length - 2 * (runs.length - 1)) / Math.max(1, units.reduce((a, b) => a + b, 0)));
+  const size = Math.min(UF.todayFontSize, maxSize, (width - 2 * runs.length - 2 * (runs.length - 1)) / Math.max(1, units.reduce((a, b) => a + b, 0)));
   const widths = units.map(unit => unit * size + 2);
   return { runs, size, widths, width: widths.reduce((a, b) => a + b, 0) + 2 * (runs.length - 1) };
 }
 
 function drawCombinedToday(ctx, value, x, y, width, height, label = '', options = {}) {
   const labelWidth = label ? 14 : 0, gap = label ? 3 : 0;
-  const spec = combinedTodayText(value, width - labelWidth - gap, options.scale || 1, options.increment, height / 1.2);
+  const spec = combinedTodayText(value, width - labelWidth - gap, options.increment, height / 1.2);
   let start = options.left ? x : x + (width - spec.width - labelWidth - gap) / 2;
   if (label) {
     text(ctx, label, start, y + (height - 8.4) / 2, labelWidth, 8.4, 7, UF.muted);
@@ -1271,13 +1300,13 @@ function drawCombinedMonth(ctx, metric, x, y, width, options = {}) {
   const used = metric ? metric.used / 1024 : null;
   const primary = used == null ? '—' : used > 0 && used < 0.1 ? '<0.1' : used.toFixed(1);
   const quota = metric ? metric.total == null ? ' GB / 不限量' : ` / ${formatGB(metric.total, true)} GB` : '';
-  const quotaSize = Math.min(UF.totalFontSize * (options.totalScale || 1), width / Math.max(1, numberWidth(quota, 1, 'total')));
-  const primarySize = Math.min(UF.usageFontSize * (options.scale || 1), (width - Math.max(options.reserve || 0, numberWidth(quota, quotaSize, 'total') + 2))
+  const quotaSize = Math.min(UF.totalFontSize, width / Math.max(1, numberWidth(quota, 1, 'total')));
+  const primarySize = Math.min(UF.usageFontSize, options.maxSize || Infinity, (width - Math.max(options.reserve || 0, numberWidth(quota, quotaSize, 'total') + 2))
     / Math.max(1, numberWidth(primary, 1, 'usage')));
   const valueWidth = numberWidth(primary, primarySize, 'usage');
-  text(ctx, primary, x, y, valueWidth + 2, 34, primarySize, UF.text, 'number');
+  text(ctx, primary, x, y, valueWidth + 2, Math.max(18, primarySize * 1.2), primarySize, UF.text, 'number');
   if (quota) text(ctx, quota, x + valueWidth + 2, y + primarySize - quotaSize,
-    width - valueWidth - 2, 18, quotaSize, UF.muted, 'total');
+    width - valueWidth - 2, quotaSize * 1.2, quotaSize, UF.muted, 'total');
   return { rightX: x + valueWidth + 2, rightWidth: width - valueWidth - 2 };
 }
 
@@ -1307,17 +1336,21 @@ function drawCombinedDetail(ctx, metric, x, y, width) {
 
 function drawCombinedMetric(ctx, metric, label, daily, x, width, accent) {
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
-  text(ctx, title, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
+  text(ctx, title, x, UF.mediumLayout === '今日在上' ? 7 : 11, width, 14, Math.min(UF.titleFontSize || 11, width / title.length), UF.text, false, false, true);
   if (UF.mediumLayout === '今日在上') {
-    if (UF.sectionBackground) roundedRect(ctx, x, 32.5, 29, 15, 5, combinedTint(accent));
-    text(ctx, '今日', x, 35.5, 29, 9, 7.5, UF.muted, false, true);
-    drawCombinedToday(ctx, daily, x + 34, 27, width - 34, 26, '', { scale: 1.6, left: true });
-    drawCombinedMonth(ctx, metric, x, 56, width, { scale: 0.6, totalScale: 0.8 });
-    drawCombinedProgress(ctx, metric, x, 76, width);
-    drawCombinedDetail(ctx, metric, x, 80, width);
+    if (UF.sectionBackground) roundedRect(ctx, x, 28, 29, 15, 5, combinedTint(accent));
+    text(ctx, '今日', x, 31, 29, 9, 7.5, UF.muted, false, true);
+    drawCombinedToday(ctx, daily, x + 34, 21, width - 34, 29, '', { left: true });
+    drawCombinedMonth(ctx, metric, x, 51, width, { maxSize: 25 });
+    drawCombinedProgress(ctx, metric, x, 82, width);
+    drawCombinedDetail(ctx, metric, x, 86, width);
   } else if (UF.mediumLayout === '今日右上角') {
     const month = drawCombinedMonth(ctx, metric, x, 38, width, { reserve: 62 });
-    drawCombinedToday(ctx, daily, month.rightX, 26, month.rightWidth, 14, '', { scale: 0.8, left: true, increment: true, color: accent });
+    const todayHeight = Math.max(14, Math.min(20, UF.todayFontSize * 1.2));
+    const today = combinedTodayText(daily, month.rightWidth - 8, true, todayHeight / 1.2);
+    const capsuleWidth = Math.min(month.rightWidth, today.width + 8);
+    if (UF.sectionBackground) roundedRect(ctx, month.rightX, 28, capsuleWidth, todayHeight + 4, (todayHeight + 4) / 2, combinedTint(accent));
+    drawCombinedToday(ctx, daily, month.rightX + 4, 30, capsuleWidth - 8, todayHeight, '', { left: true, increment: true });
     drawCombinedProgress(ctx, metric, x, 76, width);
     drawCombinedDetail(ctx, metric, x, 80, width);
   } else {
@@ -1368,6 +1401,15 @@ function drawCompactChart(ctx, slots, title, x, y, width, hourly = false) {
 }
 
 function renderImage(result, medium, width, height, mode = 'month') {
+  const typography = medium && widgetMode(mode) === 'month' && UF.mediumTypography && UF.mediumTypography[UF.mediumLayout];
+  if (!typography) return drawWidgetImage(result, medium, width, height, mode);
+  const previous = Object.fromEntries(UF_TYPOGRAPHY_KEYS.map(key => [key, UF[key]]));
+  Object.assign(UF, typography);
+  try { return drawWidgetImage(result, medium, width, height, mode); }
+  finally { Object.assign(UF, previous); }
+}
+
+function drawWidgetImage(result, medium, width, height, mode = 'month') {
   // 统一为 158 点设计高度，再随组件尺寸缩放，避免小屏沿用固定坐标而挤入圆角。
   width = Math.round(width * 158 / height);
   height = 158;
@@ -1392,7 +1434,7 @@ function renderImage(result, medium, width, height, mode = 'month') {
     drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue);
     drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple);
     // 下半双图的坐标与底色开关无关。
-    const chartY = 98;
+    const chartY = UF.mediumLayout === '今日在上' && chartLift === 0 ? 106 : 98;
     drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', leftX, chartY, col, true);
     const month = monthlyReport(result.history, now);
     const days = month.days.map((d, index) => ({ ...d, samples: d.intervals,
@@ -1586,6 +1628,18 @@ function createWidgetClass(DmYY) {
         if (this.settings.todayFont === '系统 Medium' && String(this.settings.todayFontSize) === '9.5') this.settings.todayFontSize = '12';
         this.settings.todayTypographyDefaultsApplied = true; changed = true;
       }
+      if (!this.settings.mediumTypographyInitialized) {
+        for (const layout of UF_MEDIUM_LAYOUTS) {
+          const defaults = mediumTypographyDefaults(this.settings, layout);
+          for (const key of UF_TYPOGRAPHY_KEYS) {
+            const savedKey = typographyKey(layout, key);
+            if (!Object.prototype.hasOwnProperty.call(this.settings, savedKey)) {
+              this.settings[savedKey] = defaults[key] == null ? '' : String(defaults[key]);
+            }
+          }
+        }
+        this.settings.mediumTypographyInitialized = true; changed = true;
+      }
       if (changed) this.saveSettings(false);
       this.name = '联通流量';
       this.en = 'UnicomFlow';
@@ -1595,6 +1649,7 @@ function createWidgetClass(DmYY) {
       applyTheme(this.settings);
       UF.sectionBackground = ![false, 'false'].includes(this.settings.sectionBackground);
       UF.mediumLayout = normalizedMediumLayout(this.settings.mediumLayout);
+      UF.mediumTypography = Object.fromEntries(UF_MEDIUM_LAYOUTS.map(layout => [layout, mediumTypography(this.settings, layout)]));
       if (!this.settings.refreshAfterDate) this.settings.refreshAfterDate = String(UF_DEFAULTS.refreshMinutes);
       // 原间隔同时控制请求和组件，升级时保留用户已设置的查询频率。
       if (this.settings.dataRequestMinutes == null) this.settings.dataRequestMinutes = this.settings.refreshAfterDate;
@@ -1617,6 +1672,7 @@ function createWidgetClass(DmYY) {
       applyTheme(this.settings);
       UF.sectionBackground = ![false, 'false'].includes(this.settings.sectionBackground);
       UF.mediumLayout = normalizedMediumLayout(this.settings.mediumLayout);
+      UF.mediumTypography = Object.fromEntries(UF_MEDIUM_LAYOUTS.map(layout => [layout, mediumTypography(this.settings, layout)]));
       UF.titleFontSize = normalizedTitleSize(this.settings.titleFontSize);
       for (const kind of ['usage', 'total', 'today']) {
         UF[kind + 'Font'] = normalizedNumberFont(this.settings[kind + 'Font'], UF_DEFAULTS[kind + 'Font']);
@@ -1892,20 +1948,31 @@ function createWidgetClass(DmYY) {
       ] }]);
     }
 
-    async fontSettings() {
-      const groups = [['usage', '用量文字', 12, 28], ['total', '总量与百分比', 6, 14], ['today', '今日用量（综合中号）', 6, 14]];
+    async fontSettings(layout) {
+      if (layout === undefined) {
+        const scopes = [[null, '小号与独立今日'], ...UF_MEDIUM_LAYOUTS.map(name => [name, name])];
+        return this.renderAppView([{ title: '分别设置字体与字号', menu: scopes.map(([scope, title], index) => ({
+          name: 'fontScope' + index, title, type: 'input', desc: scope ? '仅影响此中号布局' : '小号及独立今日视图',
+          icon: { name: 'textformat', color: '#007AFF' }, onClick: () => this.fontSettings(scope),
+        })) }]);
+      }
+      const values = layout ? mediumTypography(this.settings, layout) : this.settings;
+      const scopeLabel = layout ? `仅“${layout}”` : '小号与独立今日';
+      const groups = [['usage', layout ? '本月用量' : '用量文字', 12, 28], ['total', layout ? '套餐总量' : '总量与百分比', 6, 14]];
+      if (layout) groups.push(['today', '今日用量', 6, 28]);
       const sections = groups.map(([kind, title, min, max]) => ({ title, menu: [
-        { name: kind + 'Font', val: kind + 'Font', title: '字体', type: 'select',
-          options: Object.keys(UF_NUMBER_FONTS), defaultValue: this.settings[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },
-        { name: kind + 'FontSize', val: kind + 'FontSize', title: '文字大小', type: 'input',
-          defaultValue: String(normalizedFontSize(this.settings[kind + 'FontSize'], kind)),
-          desc: `${kind === 'today' ? '综合中号三种布局的今日用量' : '小号、中号共用'}；输入 ${min}—${max}，支持小数；内容过宽时自动缩小`,
+        { name: typographyKey(layout, kind + 'Font'), val: typographyKey(layout, kind + 'Font'), title: '字体', type: 'select',
+          options: Object.keys(UF_NUMBER_FONTS), defaultValue: values[kind + 'Font'], icon: { name: 'textformat', color: '#007AFF' } },
+        { name: typographyKey(layout, kind + 'FontSize'), val: typographyKey(layout, kind + 'FontSize'), title: '文字大小', type: 'input',
+          defaultValue: String(normalizedFontSize(values[kind + 'FontSize'], kind, !!layout)),
+          desc: `${scopeLabel}；实际字号 ${min}—${max}，支持小数；空间不足时自动缩小`,
           icon: { name: 'textformat.size', color: '#007AFF' },
           onClick: async (_, __, view) => {
-            const key = kind + 'FontSize';
+            const key = typographyKey(layout, kind + 'FontSize');
             const a = new Alert(); a.title = title + '大小';
-            a.message = `${kind === 'today' ? '综合中号三种布局的今日用量。' : '小号、中号共用。'}请输入 ${min}—${max} 之间的字号，支持小数；内容过宽时自动缩小。`;
-            a.addTextField(String(UF_DEFAULTS[key]), String(normalizedFontSize(this.settings[key], kind)));
+            a.message = `${scopeLabel}。输入 ${min}—${max} 之间的实际字号，支持小数，不按布局倍数缩放；空间不足时自动缩小。`;
+            const fallback = layout ? mediumTypographyDefaults(UF_DEFAULTS, layout)[kind + 'FontSize'] : UF_DEFAULTS[kind + 'FontSize'];
+            a.addTextField(String(fallback), String(normalizedFontSize(this.settings[key], kind, !!layout, fallback)));
             a.addAction('保存'); a.addCancelAction('取消');
             if (await a.presentAlert() < 0) return;
             const value = a.textFieldValue(0).trim(), size = Number(value);
@@ -1914,18 +1981,19 @@ function createWidgetClass(DmYY) {
             if (view && this.insertTextByElementId) this.insertTextByElementId(view, key, String(size));
           } },
       ] }));
-      sections.push({ title: '标题文字', menu: [{ name: 'titleFontSize', val: 'titleFontSize', title: '文字大小', type: 'input',
-        defaultValue: normalizedTitleSize(this.settings.titleFontSize) == null ? '随尺寸' : String(normalizedTitleSize(this.settings.titleFontSize)),
-        desc: '小号、中号共用；8—12，支持小数；留空恢复小号10、中号11', icon: { name: 'textformat.size', color: '#007AFF' },
+      const titleKey = typographyKey(layout, 'titleFontSize');
+      sections.push({ title: '标题文字', menu: [{ name: titleKey, val: titleKey, title: '文字大小', type: 'input',
+        defaultValue: normalizedTitleSize(this.settings[titleKey]) == null ? '随尺寸' : String(normalizedTitleSize(this.settings[titleKey])),
+        desc: `${scopeLabel}；8—12，支持小数；留空恢复默认`, icon: { name: 'textformat.size', color: '#007AFF' },
         onClick: async (_, __, view) => {
-          const a = new Alert(); a.title = '标题文字大小'; a.message = '输入 8—12 之间的字号，小号、中号共用；留空恢复默认（小号10、中号11）。长标题自动缩小以适应宽度。';
-          a.addTextField('留空恢复默认', normalizedTitleSize(this.settings.titleFontSize) == null ? '' : String(normalizedTitleSize(this.settings.titleFontSize)));
+          const a = new Alert(); a.title = '标题文字大小'; a.message = `${scopeLabel}。输入 8—12 之间的字号；留空恢复默认（小号10、中号11）。长标题自动缩小以适应宽度。`;
+          a.addTextField('留空恢复默认', normalizedTitleSize(this.settings[titleKey]) == null ? '' : String(normalizedTitleSize(this.settings[titleKey])));
           a.addAction('保存'); a.addCancelAction('取消'); if (await a.presentAlert() < 0) return;
           const value = a.textFieldValue(0).trim(), size = normalizedTitleSize(value);
           if (value && size == null) return alertMessage('未保存', '请输入 8—12 之间的数字，或留空恢复默认');
-          if (value) this.settings.titleFontSize = String(size); else delete this.settings.titleFontSize;
+          if (value) this.settings[titleKey] = String(size); else delete this.settings[titleKey];
           this.saveSettings(false);
-          if (view && this.insertTextByElementId) this.insertTextByElementId(view, 'titleFontSize', value ? String(size) : '随尺寸');
+          if (view && this.insertTextByElementId) this.insertTextByElementId(view, titleKey, value ? String(size) : '随尺寸');
         } }] });
       return this.renderAppView(sections);
     }

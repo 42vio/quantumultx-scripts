@@ -854,17 +854,17 @@ function distributionFixture() {
   assert.ok(activeImage.includes('主 1.2 GB'));assert.ok(activeImage.includes('副 2.0 GB'));
   assert.ok(activeImage.includes('>80.0</text>'));assert.ok(activeImage.includes('今日分类未确认'));
   fs.writeFileSync(`${output}/medium-combined-shared-light.svg`,activeImage);
-  // 三个菜单布局使用同一份历史和下半部图表；底色只影响绘制，不改变任何内容坐标。
+  // 新两版按整卡中线分区，图表位置一致；底色不改变任何内容坐标。
   const layoutNames=['今日横条','今日在上','今日右上角'];
   designVisual.UF.mediumTypography=Object.fromEntries(layoutNames.map(layout=>[layout,api.mediumTypographyDefaults(designVisual.UF,layout)]));
   const removeLayoutBackground=svg=>svg.replace(/<rect[^>]*rx="(?:5|6)"[^>]*\/>/g,'')
-    .replace(/<rect[^>]*y="28"[^>]*height="[0-9.]+"[^>]*rx="[0-9.]+"[^>]*\/>/g,'');
+    .replace(/<rect[^>]*y="24"[^>]*height="[0-9.]+"[^>]*rx="[0-9.]+"[^>]*\/>/g,'');
   const chartSection=svg=>svg.slice(svg.indexOf('>今日小时</text>'));
   const layoutHistoryBefore=JSON.stringify(designHistory);
   const layoutMeasurements=[];
   for(const theme of ['黑色','白色']) {
     designVisual.applyTheme({theme});
-    let sameChart,sameSmall,sameToday;
+    const sameChart={};let sameSmall,sameToday;
     for(const [index,layout] of layoutNames.entries()) {
       designVisual.UF.mediumLayout=layout;designVisual.UF.sectionBackground=true;
       DrawContext.capture=[];
@@ -876,14 +876,20 @@ function distributionFixture() {
       assert.equal(on.includes(' · 今日</text>'),index===1);
       assert.ok(!on.includes('>本月</text>')&&!on.includes('>今日用量</text>')&&!on.includes('>独享</text>'));
       const dailyRuns=DrawContext.capture.filter(row=>[...dailyValues,'MB','GB'].includes(row.text));
-      const scale=[1,2,.8][index];
-      assert.equal(dailyRuns.length,4);assert.ok(dailyRuns.every(row=>Math.abs(row.font.size-12*scale)<1e-8));
+      const expectedSize=[12,26/1.2,9.6][index];
+      assert.equal(dailyRuns.length,4);assert.ok(dailyRuns.every(row=>Math.abs(row.font.size-expectedSize)<1e-8));
+      if(index>0) {
+        const chartStart=DrawContext.capture.findIndex(row=>row.text==='今日小时');
+        assert.ok(DrawContext.capture.slice(0,chartStart).every(row=>row.rect.y+row.rect.height<=79+1e-8));
+        assert.ok(DrawContext.capture.slice(chartStart).every(row=>row.rect.y>=79));
+        assert.equal(DrawContext.capture[chartStart].rect.y-4,158/2);
+      }
       if(index===1) {
         assert.ok(dailyRuns.every(row=>row.font.weight===500));
         assert.ok(on.includes('font-size="25">8.8</text>'));
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
         for(let i=0;i<2;i++) assert.equal(dailyRuns[i*2].rect.x,monthRows[i].rect.x);
-        const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="29" width="5" height="52" rx="1.25" ry="1.25"/g)];
+        const tracks=[...on.matchAll(/<rect x="([0-9.]+)" y="23" width="5" height="52" rx="1.25" ry="1.25"/g)];
         assert.equal(tracks.length,2);assert.equal(Number(tracks[0][1]),19);assert.equal(Number(tracks[1][1]),175);
         assert.ok(!on.includes('y="82" width="144" height="4"'));
         assert.ok(!on.includes('rx="5"'));
@@ -891,11 +897,11 @@ function distributionFixture() {
         const shared=api.displayMetrics(designHistory.data).right;
         assert.ok(viceSegment);
         assert.ok(Math.abs(Number(viceSegment[2])-52*shared.used/shared.total)<1e-8);
-        assert.ok(Math.abs(Number(viceSegment[1])+Number(viceSegment[2])-81)<1e-8);
+        assert.ok(Math.abs(Number(viceSegment[1])+Number(viceSegment[2])-75)<1e-8);
       }
       if(index===2) {
         const monthRows=DrawContext.capture.filter(row=>['8.8','3.2'].includes(row.text));
-        const capsules=[...on.matchAll(/<rect x="([0-9.]+)" y="28" width="([0-9.]+)" height="18" rx="9" ry="9"/g)];
+        const capsules=[...on.matchAll(/<rect x="([0-9.]+)" y="24" width="([0-9.]+)" height="18" rx="9" ry="9"/g)];
         assert.equal(capsules.length,2);
         const incrementColors=[...on.matchAll(/<text[^>]*fill="([^"]+)"[^>]*>([^<]+)<\/text>/g)].filter(row=>dailyValues.includes(row[2]));
         assert.equal(incrementColors.length,2);
@@ -906,11 +912,12 @@ function distributionFixture() {
           assert.ok(Math.abs(dailyRuns[i*2].rect.x-Number(capsules[i][1])-4)<1e-8);
           const last=dailyRuns[i*2+1];
           assert.ok(Math.abs(Number(capsules[i][1])+Number(capsules[i][2])-last.rect.x-last.rect.width-4)<1e-8);
-          assert.ok(Math.abs(dailyRuns[i*2].rect.y+dailyRuns[i*2].rect.height/2-37)<1e-8);
+          assert.ok(Math.abs(dailyRuns[i*2].rect.y+dailyRuns[i*2].rect.height/2-33)<1e-8);
         }
       }
       layoutMeasurements.push(...dailyRuns);
-      const chart=chartSection(on);if(sameChart)assert.equal(chart,sameChart);else sameChart=chart;
+      const chart=chartSection(on),chartKey=index===0?'legacy':'half';
+      if(sameChart[chartKey])assert.equal(chart,sameChart[chartKey]);else sameChart[chartKey]=chart;
       const small=designVisual.renderImage({history:designHistory,stale:false},false,158,158);
       const today=designVisual.renderImage({history:designHistory,stale:false},true,338,158,'today');
       if(sameSmall)assert.equal(small,sameSmall);else sameSmall=small;
@@ -919,9 +926,15 @@ function distributionFixture() {
       const off=designVisual.renderImage({history:designHistory,stale:false},true,338,158);
       assert.equal(removeLayoutBackground(on),off);
       designVisual.UF.sectionBackground=true;
+      DrawContext.capture=[];
       const active=designVisual.renderImage({history:{...designHistory,data:activeData},stale:false},true,338,158);
       assert.ok(active.includes('主 1.2 GB')&&active.includes('副 2.0 GB'));
       assert.ok(!active.includes('主 0 MB'));
+      if(index>0) {
+        const chartStart=DrawContext.capture.findIndex(row=>row.text==='今日小时');
+        assert.ok(DrawContext.capture.slice(0,chartStart).every(row=>row.rect.y+row.rect.height<=79+1e-8));
+        assert.equal(DrawContext.capture[chartStart].rect.y,83);
+      }
       fs.writeFileSync(`${output}/medium-layout-${index}-${theme==='白色'?'light':'dark'}.svg`,on);
       fs.writeFileSync(`${output}/medium-layout-${index}-shared-${theme==='白色'?'light':'dark'}.svg`,active);
       for(const [width,height] of [[292,141],[338,158],[372,174]]) {
@@ -1641,7 +1654,7 @@ function distributionFixture() {
     const monthRun=DrawContext.capture.find(row=>row.text==='8.8');
     const dayRun=DrawContext.capture.find(row=>row.text===(index===2?'+386':'386'));
     assert.equal(monthRun.font.size,20+index);
-    assert.ok(Math.abs(dayRun.font.size-daySize)<1e-8);
+    assert.ok(Math.abs(dayRun.font.size-(layout==='今日在上'?Math.min(daySize,26/1.2):daySize))<1e-8);
     const fontName=font=>font.name||(font.mono?'SF Mono':'系统');
     assert.equal(fontName(monthRun.font),['Menlo-Regular','系统','SF Mono'][index]);
     assert.equal(fontName(dayRun.font),['SF Mono','Menlo-Regular','系统'][index]);

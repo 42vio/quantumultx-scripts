@@ -1310,10 +1310,12 @@ function drawCombinedMonth(ctx, metric, x, y, width, options = {}) {
   const primarySize = Math.min(UF.usageFontSize, options.maxSize || Infinity, (width - Math.max(options.reserve || 0, numberWidth(quota, quotaSize, 'total') + 2))
     / Math.max(1, numberWidth(primary, 1, 'usage')));
   const valueWidth = numberWidth(primary, primarySize, 'usage');
-  text(ctx, primary, x, y, valueWidth + 2, Math.max(18, primarySize * 1.2), primarySize, UF.text, 'number');
-  if (quota) text(ctx, quota, x + valueWidth + 2, y + primarySize - quotaSize,
+  const valueY = options.baseline == null ? y : options.baseline - primarySize;
+  const quotaY = options.baseline == null ? y + primarySize - quotaSize : options.baseline - quotaSize;
+  text(ctx, primary, x, valueY, valueWidth + 2, Math.max(18, primarySize * 1.2), primarySize, UF.text, 'number');
+  if (quota) text(ctx, quota, x + valueWidth + 2, quotaY,
     width - valueWidth - 2, quotaSize * 1.2, quotaSize, UF.muted, 'total');
-  return { rightX: x + valueWidth + 2, rightWidth: width - valueWidth - 2 };
+  return { rightX: x + valueWidth + 2, rightWidth: width - valueWidth - 2, quotaY };
 }
 
 function drawCombinedProgress(ctx, metric, x, y, width, height = 4) {
@@ -1340,24 +1342,26 @@ function drawCombinedDetail(ctx, metric, x, y, width) {
   }
 }
 
-function drawCombinedMetric(ctx, metric, label, daily, x, width, accent) {
+function drawCombinedMetric(ctx, metric, label, daily, x, width, accent, region = {}) {
+  const splitY = region.splitY == null ? 79 : region.splitY;
   const title = ['通用', '定向'].includes(label) ? '数据流量·' + label : label;
   const heading = UF.mediumLayout === '今日在上' ? title + ' · 今日' : title;
-  text(ctx, heading, x, 11, width, 14, Math.min(UF.titleFontSize || 11, width / heading.length), UF.text, false, false, true);
+  text(ctx, heading, x, UF.mediumLayout === '今日横条' ? 11 : splitY - 74, width, 14, Math.min(UF.titleFontSize || 11, width / heading.length), UF.text, false, false, true);
   if (UF.mediumLayout === '今日在上') {
-    drawCombinedToday(ctx, daily, x + 10, 25, width - 10, 29, '', { left: true });
-    drawCombinedMonth(ctx, metric, x + 10, 56, width - 10, { maxSize: 25 });
-    drawVerticalProgress(ctx, metric, x, 29, 52);
-    drawCombinedDetail(ctx, metric, x + 10, 86, width - 10);
+    drawCombinedToday(ctx, daily, x + 10, splitY - 60, width - 10, 26, '', { left: true });
+    drawCombinedMonth(ctx, metric, x + 10, 0, width - 10, { maxSize: region.details ? 20 : 25, baseline: splitY - (region.details ? 14 : 9) });
+    drawVerticalProgress(ctx, metric, x, splitY - 56, region.details ? 47 : 52);
+    drawCombinedDetail(ctx, metric, x + 10, splitY - 8, width - 10);
   } else if (UF.mediumLayout === '今日右上角') {
-    const month = drawCombinedMonth(ctx, metric, x, 38, width, { reserve: 62 });
-    const todayHeight = Math.max(14, Math.min(20, UF.todayFontSize * 1.2));
+    const month = drawCombinedMonth(ctx, metric, x, 0, width, { reserve: 62, baseline: splitY - 20 });
+    const capsuleY = splitY - 55;
+    const todayHeight = Math.min(Math.max(14, Math.min(20, UF.todayFontSize * 1.2)), month.quotaY - capsuleY - 6);
     const today = combinedTodayText(daily, month.rightWidth - 8, true, todayHeight / 1.2);
     const capsuleWidth = Math.min(month.rightWidth, today.width + 8);
-    if (UF.sectionBackground) roundedRect(ctx, month.rightX, 28, capsuleWidth, todayHeight + 4, (todayHeight + 4) / 2, combinedTint(accent));
-    drawCombinedToday(ctx, daily, month.rightX + 4, 30, capsuleWidth - 8, todayHeight, '', { left: true, increment: true });
-    drawCombinedProgress(ctx, metric, x, 76, width);
-    drawCombinedDetail(ctx, metric, x, 80, width);
+    if (UF.sectionBackground) roundedRect(ctx, month.rightX, capsuleY, capsuleWidth, todayHeight + 4, (todayHeight + 4) / 2, combinedTint(accent));
+    drawCombinedToday(ctx, daily, month.rightX + 4, capsuleY + 2, capsuleWidth - 8, todayHeight, '', { left: true, increment: true });
+    drawCombinedProgress(ctx, metric, x, splitY - (region.details ? 14 : 8), width);
+    drawCombinedDetail(ctx, metric, x, splitY - 9, width);
   } else {
     drawCombinedMonth(ctx, metric, x, 28, width);
     drawCombinedProgress(ctx, metric, x, 59, width);
@@ -1436,10 +1440,11 @@ function drawWidgetImage(result, medium, width, height, mode = 'month') {
   const buckets = medium && today ? todayBuckets(result.history, now) : [];
   if (combined) {
     const leftX = pad + 6, col = (width - 2 * leftX - 12) / 2, rightX = leftX + col + 12;
-    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue);
-    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple);
-    // 下半双图的坐标与底色开关无关。
-    const chartY = UF.mediumLayout === '今日在上' && chartLift === 0 ? 106 : 98;
+    const region = { splitY: height / 2, details: chartLift === 0 };
+    drawCombinedMetric(ctx, metrics.left, metrics.leftLabel, daily[0], leftX, col, UF.blue, region);
+    drawCombinedMetric(ctx, metrics.right, metrics.rightLabel, daily[1], rightX, col, UF.purple, region);
+    // 新两版以整卡中线分区；图表、刻度、页脚统一留在下半区。
+    const chartY = UF.mediumLayout === '今日横条' ? 98 : region.splitY + 14;
     drawCompactChart(ctx, widgetHourSlots(result.history, now), '今日小时', leftX, chartY, col, true);
     const month = monthlyReport(result.history, now);
     const days = month.days.map((d, index) => ({ ...d, samples: d.intervals,
